@@ -1,0 +1,100 @@
+"""Ghi dòng bị cách ly vào bảng Iceberg ``ops.quarantine`` (mức "cách ly dòng", PLAN mục 9.3).
+
+Mỗi dòng ``bad`` của ``split_valid`` thành một dòng ``ops.quarantine``. Dạng bảng thay cho file Parquet
+để đếm, lọc, join, đưa lên Superset và chạy lại dễ hơn. Lỗi cấp lô vẫn ghi file vào ``quarantine/`` trên
+MinIO (``vicap.storage.quarantine``).
+
+Cách dùng::
+
+    res = validate(table, gold_features_suite(silver=silver_ids))
+    res.batch.quarantine_and_raise(table, domain="gold_features", processing_date=ds, batch_id=batch_id)
+    write_quarantine_rows(ops_table, res.bad, stage="gold_features", batch_id=batch_id, processing_date=ds)
+    replace_by_keys(features_table, res.ok)
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+
+import pyarrow as pa
+from pyiceberg.expressions import And, EqualTo
+from pyiceberg.table import Table
+
+from vicap.iceberg.writer import write_table
+from vicap.storage import paths
+from vicap.utils.dates import now_utc, parse_date
+
+SEVERITIES = ("error", "warn")
+
+
+def _column_or_null(bad: pa.Table, name: str) -> pa.Array:
+    if name in bad.column_names:
+        return bad.column(name).cast(pa.string()).combine_chunks()
+    return pa.nulls(bad.num_rows, pa.string())
+
+
+def quarantine_rows(
+    bad: pa.Table,
+    *,
+    stage: str,
+    batch_id: str,
+    processing_date: str | date | datetime,
+    severity: str = "error",
+    raw_bucket: str = "raw",
+    error_column: str = "_errors",
+    created_at: datetime | None = None,
+) -> pa.Table:
+    """Dựng các dòng ``ops.quarantine`` từ ``bad`` (cần cột ``_errors``).
+
+    ``raw_ref`` = ``s3://{raw_bucket}/videos/{video_id}/`` để mở lại file gốc; ``None`` khi dòng không có
+    ``video_id`` (vd hồ sơ creator, khi đó chỉ có ``username``).
+    """
+    if severity not in SEVERITIES:
+        raise ValueError(f"severity phải thuộc {SEVERITIES}: {severity!r}")
+    if error_column not in bad.column_names:
+        raise ValueError(f"thiếu cột {error_column!r} (lấy từ split_valid)")
+    n = bad.num_rows
+    video_ids = _column_or_null(bad, "video_id")
+    raw_refs = [
+        None if vid is None else paths.s3_uri(raw_bucket, paths.raw_prefix(vid)) for vid in video_ids.to_pylist()
+    ]
+    ts = created_at or now_utc()
+    return pa.table({
+        "video_id": video_ids,
+        "username": _column_or_null(bad, "username"),
+        "stage": pa.array([stage] * n, pa.string()),
+        "batch_id": pa.array([batch_id] * n, pa.string()),
+        "processing_date": pa.array([parse_date(processing_date)] * n, pa.date32()),
+        "errors": bad.column(error_column).cast(pa.list_(pa.string())).combine_chunks(),
+        "severity": pa.array([severity] * n, pa.string()),
+        "raw_ref": pa.array(raw_refs, pa.string()),
+        "resolved": pa.array([False] * n, pa.bool_()),
+        "created_at": pa.array([ts] * n, pa.timestamp("us", tz="UTC")),
+    })
+
+
+def write_quarantine_rows(
+    table: Table,
+    bad: pa.Table,
+    *,
+    stage: str,
+    batch_id: str,
+    processing_date: str | date | datetime,
+    severity: str = "error",
+    raw_bucket: str = "raw",
+) -> int:
+    """Ghi đè các dòng của ``(stage, batch_id)`` trong ``ops.quarantine``; trả về số dòng đã ghi.
+
+    Ghi đè theo ``(stage, batch_id)`` nên retry cùng ``batch_id`` không sinh dòng trùng. Lô không còn dòng
+    lỗi thì xoá các dòng cũ của ``(stage, batch_id)``, để kết quả luôn khớp lần chạy mới nhất.
+    """
+    this_batch = And(EqualTo("stage", stage), EqualTo("batch_id", batch_id))
+    if bad.num_rows == 0:
+        table.delete(this_batch)
+        return 0
+    rows = quarantine_rows(
+        bad, stage=stage, batch_id=batch_id, processing_date=processing_date, severity=severity,
+        raw_bucket=raw_bucket,
+    )
+    write_table(table, rows, mode="overwrite", overwrite_filter=this_batch)
+    return rows.num_rows

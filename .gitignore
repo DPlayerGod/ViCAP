@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Môi trường / bí mật
+.env
+.env.*
+!.env.example
+kaggle.json
+cookies*.txt
+
+# Dữ liệu & mô hình (không đưa lên git)
+data/
+models/
+test_out/
+*.mp4
+*.mp3
+mlruns/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Giai đoạn 0 — file tải về để so (giữ phase0/phase0_inputs/ và test_creators.txt)
+phase0/out/
+phase0/*.log
+
+# Frontend (Node)
+apps/frontend/node_modules/
+apps/frontend/dist/

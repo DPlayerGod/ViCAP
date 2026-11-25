@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vicap"
+version = "0.1.0"
+description = "ViCAP: phân loại nội dung video TikTok và hồ sơ creator (khoá luận)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pyarrow>=16",
+    "numpy>=1.26",
+    "pyiceberg[s3fs,pyiceberg-core]>=0.9",
+    "s3fs>=2024.6",
+    "clickhouse-connect>=0.7",
+    "python-dotenv>=1.0",
+    "tenacity>=8.2",
+]
+
+[project.optional-dependencies]
+# Image Airflow đã có apache-airflow, không cài lại.
+airflow = ["apache-airflow-providers-docker>=3.9", "kafka-python>=2.0.2", "yt-dlp[default]==2026.11.23"]
+spark = ["pyspark>=3.5,<3.6"]
+gpu = ["torch", "transformers", "pyvi", "mlflow", "opencv-python-headless", "pillow"]
+# scripts/ của Giai đoạn 0
+scripts = ["yt-dlp[default]==2026.11.23", "pandas", "opencv-python-headless", "pillow"]
+api = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]
+dev = ["pytest>=8", "ruff>=0.5", "pyiceberg[sql-sqlite]>=0.9"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vicap"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q -p no:cacheprovider"
+markers = [
+    "integration: cần dịch vụ docker-compose (MinIO, Iceberg REST, …)",
+]
+
+[tool.ruff]
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["UP042"]  # giữ `class X(str, Enum)` như HOSE
