@@ -72,7 +72,7 @@ Trả lời câu hỏi: **yt-dlp có thay được Apify không?**
 
 | Bảng (Iceberg) | Nội dung chính |
 |---|---|
-| `bronze.videos_raw` | `video_id`, `username`, `crawl_ts`, `batch_id`, `media_type` (video / slideshow, mục 4.1), metadata JSON gốc, key mp4 / thumbnail trên MinIO (theo `video_id`, mục 4.2) |
+| `bronze.videos_raw` | Mỗi dòng một message `ok` của `tiktok.videos`, khoá `(batch_id, video_id)`: `video_id`, `username`, `crawl_ts`, `batch_id`, `media_type` (video / slideshow, mục 4.1), caption, hashtag, lượt xem / thích / follower, key `info.json` / mp4 / ảnh bìa / ảnh slideshow trên MinIO (theo `video_id`, mục 4.2), `raw_json` (itemStruct gốc), partition / offset Kafka |
 | `bronze.creators_raw` | `username`, follower, nguồn phát hiện (hashtag nào), thời điểm phát hiện |
 | `silver.videos` | Video đã làm sạch, khử trùng; `media_type` (video / slideshow), caption + hashtag đã chuẩn hoá |
 | `silver.transcripts` | Transcript PhoWhisper (`transcript_raw`), cờ có / không có transcript |
@@ -105,10 +105,10 @@ ClickHouse giữ bản sao của `gold.video_predictions`, `gold.creator_profile
 
 **Slideshow — còn để mở.** yt-dlp chỉ trả audio + ảnh bìa; ảnh của slideshow lấy được từ `imagePost` trong itemStruct (hàm nội bộ `TikTokIE._extract_web_data_and_status`, cần ghim phiên bản yt-dlp). Dataset v5 vẫn có `_1…_7` cho slideshow nhưng chưa rõ cách dựng, nên chưa chốt cách lấy 8 ảnh. Trong lúc chờ: gắn cờ `media_type` (`video` / `slideshow`) ngay từ Bronze, theo `vcodec` / có `imagePost`, để tách riêng khi đánh giá và khi tính embedding.
 
-`model/predict.py` dựng đầu vào cho P1:
+`model/predict.py` (`build_p1_inputs`) nối `text_emb` thành 1.536 chiều (tương ứng `T_capasr` trong notebook) và lấy trung bình `image_emb` thành 768 chiều (tương ứng `V_frames`) trước khi đưa vào P1. Cột 8 × 768 chỉ là định dạng lưu trong bảng. Hai chi tiết phải giữ đúng như notebook:
 
-- Text: nối `text_emb` thành 1.536 chiều (tương ứng `T_capasr` trong notebook).
-- Hình: lấy trung bình 8 vector của `image_emb` thành 768 chiều (tương ứng `V_frames`).
+- Text ghép theo thứ tự `[caption+hashtag ; ASR]` (`text_emb[0]` rồi `text_emb[1]`). Nếu đảo thứ tự, model vẫn chạy nhưng dự đoán sai mà không báo lỗi.
+- Hình chỉ chia cho số ảnh thật sự có (vector khác 0), không chia cố định cho 8, giống `siglip_encode` của notebook. Video không có ảnh nào thì ra vector 0. Khi đủ 8 ảnh thì hai cách cho cùng kết quả; khi thiếu ảnh thì chia cho số ảnh có mới khớp lúc train.
 
 Kiểm tra trong `quality/suites.py` (mức "cách ly dòng", mục 9.3):
 
@@ -191,9 +191,11 @@ discover ──> crawl ──> bronze ──> silver_clean ──> asr ──> e
   - Silver / Gold ghi theo `video_id` (giữ bản crawl mới nhất). Spark dùng `MERGE INTO` (cần Iceberg SQL extensions, mục 9.4).
   - Với PyIceberg, bảng có cột mảng (`gold.features`, `gold.video_predictions`) dùng `overwrite(df, overwrite_filter=In("video_id", ids))`: xoá rồi ghi trong cùng một commit, kết quả giống upsert. Không dùng `table.upsert` cho các bảng này, vì hàm đó so từng cột không phải khoá để tìm dòng đổi, gặp mảng 8×768 thì dễ lỗi hoặc rất chậm. `upsert` chỉ dùng cho bảng không có cột mảng.
 - **Bronze đọc Kafka** (kafka-python, consumer group `bronze-writer`, tắt auto commit):
-  - Đầu task lấy `end_offsets(assignment)` làm mốc.
-  - Poll tới khi mọi partition có `consumer.position(tp) >= mốc`.
-  - Ghi Iceberg xong mới commit offset. Lỗi giữa chừng thì không commit; lần chạy lại đọc lại từ offset cũ.
+  - Gán thẳng mọi partition (`assign`, không `subscribe` nên không chờ rebalance), đọc từ offset đã commit.
+  - Đầu task lấy `end_offsets` làm mốc; poll tới khi mọi partition có `position >= mốc`, bỏ record có offset ≥ mốc (để lần sau).
+  - Khử trùng theo `(batch_id, video_id)` giữ `crawl_ts` mới nhất, gộp với dòng đã có của cùng `batch_id`, ghi đè theo `batch_id` trong một commit.
+  - Ghi Iceberg xong mới commit offset (đúng mốc). Lỗi giữa chừng thì không commit; lần chạy lại đọc lại từ offset cũ.
+  - `ops.quarantine` gộp theo `(stage, batch_id)` thay vì ghi đè (một lần chạy có thể chỉ thấy một phần lô); video lần này đã vào Bronze thì bỏ khỏi quarantine của lô đó.
 - GPU worker (container `gpu-worker`, mục 9.4) nạp **lần lượt** PhoWhisper → PhoBERT → SigLIP2, giải phóng bộ nhớ sau mỗi bước.
 - `predict` nạp `models:/kltn-p1@champion`, gán nhãn theo mục 4.3; đổi mô hình chỉ cần chuyển alias trong MLflow.
 - Mỗi bước kiểm định theo mục 9.3: dòng lỗi bị cách ly, phần còn lại chạy tiếp; lỗi cấp lô thì dừng.
@@ -246,6 +248,7 @@ Hệ thống dựng trên repo đồ án thực tập [`DPlayerGod/hose-stock-la
 | `quality/` (6 chiều, `run_suite`, quarantine) | Giữ thiết kế config + hàm check, `result.py`; viết lại `checks.py` trên PyArrow + NumPy thay cho Polars (bỏ `WithinDailyBand` của chứng khoán); thêm check vector và `split_valid`; viết `suites.py` mới cho video (mục 9.3) |
 | `staging/` (`writer.py`: `StagingPathBuilder`, đọc / ghi Parquet; `quarantine.py`) | Đổi thành `storage/`: `paths.py` (hàm dựng key thay `StagingPathBuilder`: `raw_video`, `frame`, `quarantine`, cùng quy ước tên mục 4.2), `quarantine.py` (giữ nguyên, chỉ đổi đường dẫn; chỉ còn lỗi cấp lô, dòng lỗi chuyển sang bảng `ops.quarantine` trong `quality/quarantine.py`), `objects.py` (`put_bytes` / `get_bytes` / `exists`, crawler và gpu-worker dùng chung). Bỏ `write_staging_parquet` / `read_staging_parquet` |
 | `utils/dates.py` | Giữ (`storage/paths.py` dùng `format_date`) |
+| `logging.basicConfig` trong từng module | Thay bằng Loguru: code `vicap` dùng `from loguru import logger`; `vicap.utils.log.setup_logging()` gọi một lần ở `main()`, chuyển log `logging` chuẩn của thư viện (kafka-python, pyiceberg) sang Loguru, chỉ tô màu khi ghi ra terminal (log Airflow không dính mã ANSI) |
 | `clickhouse/` (client, loader), `streaming/clickhouse/init*.sql` | Giữ client; viết DDL và loader mới cho 3 bảng phục vụ |
 | `streaming/producer/` | Thành producer đẩy metadata video vào Kafka |
 | `tests/` (pytest, marker `integration`) | Giữ cách tổ chức |
@@ -328,7 +331,7 @@ Chiều "Hợp lý" ứng với `Dimension.ACCURACY` trong code.
 ViCAP/
 ├── src/vicap/                 # thư viện dùng chung (src layout, PyPA)
 │   ├── config.py
-│   ├── utils/                 # dates                                  (từ HOSE)
+│   ├── utils/                 # dates (từ HOSE), log (Loguru)
 │   ├── iceberg/               # catalog, reader, writer, tables        (từ HOSE)
 │   ├── quality/               # checks (PyArrow + NumPy), result (từ HOSE) + suites video, split_valid, quarantine (ops.quarantine)
 │   ├── storage/               # paths (key MinIO + tên file), objects, quarantine cấp lô (từ HOSE)

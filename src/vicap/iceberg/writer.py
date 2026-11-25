@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from typing import Literal
 
 import pyarrow as pa
@@ -52,7 +53,9 @@ def write_table(
         return
     if mode == "overwrite":
         if overwrite_filter is not None:
-            table.overwrite(arrow_table, overwrite_filter=overwrite_filter)
+            with warnings.catch_warnings():  # lần đầu ghi một lô / khoá: chưa có dòng nào để xoá là bình thường
+                warnings.filterwarnings("ignore", "Delete operation did not match any records")
+                table.overwrite(arrow_table, overwrite_filter=overwrite_filter)
         else:
             table.overwrite(arrow_table)
         return

@@ -123,5 +123,8 @@ def test_s3_roundtrip() -> None:
     fs = objects.s3_filesystem(config)
     key = f"test_storage/{uuid.uuid4().hex[:8]}.bin"
     objects.put_bytes(config.bucket, key, b"\x00\x01", fs=fs)
-    assert objects.exists(config.bucket, key, fs=fs)
-    assert objects.get_bytes(config.bucket, key, fs=fs) == b"\x00\x01"
+    try:
+        assert objects.exists(config.bucket, key, fs=fs)
+        assert objects.get_bytes(config.bucket, key, fs=fs) == b"\x00\x01"
+    finally:
+        fs.rm_file(f"{config.bucket}/{key}")

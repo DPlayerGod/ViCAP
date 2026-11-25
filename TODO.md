@@ -46,7 +46,7 @@
 - [x] `staging/` → `storage/`: `paths.py` (key MinIO theo `video_id`: `raw_video`, `frame`, `audio`, `quarantine`; dựng / tách `legacy_stem` để ghép v5), `objects.py` (`put_bytes` / `get_bytes` / `exists`), `quarantine.py` (chỉ lỗi cấp lô); bỏ staging Parquet của HOSE; theo PLAN mục 4.2 + test
 - [x] Bảng `ops.quarantine` + `quality/quarantine.py` (`write_quarantine_rows`, ghi đè theo `(stage, batch_id)`) cho lỗi theo dòng + test trên SqlCatalog
 - [x] `quality/`: check vector (`VectorDtype`, `VectorShape`, `NonZeroVector`, `VectorRange`), `NonEmpty`, `Covers`, `MeanShift`, `split_valid`; `suites.py` cho video theo hai cấp (PLAN mục 9.3) + test
-- [ ] Xác nhận checkpoint PhoBERT của notebook v12 (đang để `vinai/phobert-base` trong `ModelConfig.text_encoder`)
+- [x] Xác nhận checkpoint PhoBERT của notebook v12: `vinai/phobert-base` (`TEXT_MODEL_NAME`, pyvi tách từ, `max_length=256`, mean-pool theo mask), khớp `ModelConfig.text_encoder`
 
 ### Hạ tầng
 - [x] `docker-compose.yml` (từ compose HOSE, ghim phiên bản image, bí mật `${VAR:?}`, `mem_limit`): profile `core` (Postgres, MinIO, Iceberg REST, ClickHouse), `stream` (Kafka), `pipeline` (Airflow 3.4 + Spark local + `docker-proxy`), `ml` (MLflow, image `gpu-worker`), `serving` (Superset)
@@ -64,7 +64,7 @@
 - [x] `infra/superset/Dockerfile` cài `clickhouse-connect`; Superset kết nối được ClickHouse (`clickhousedb://…/vicap`)
 - [x] `infra/clickhouse/init.sql` (DDL 3 bảng phục vụ), `infra/kafka/create_topics.sh` (topic `tiktok.videos`: 3 partition, retention 7 ngày, chạy lại được)
 - [x] `dags/.airflowignore`; compose mount `./dags` vào Airflow, build từ `./infra/<service>`
-- [ ] Đặt `memory=8GB` + `autoMemoryReclaim=gradual` trong `%UserProfile%\.wslconfig` rồi `wsl --shutdown` (VM Docker mặc định 7,4 GB)
+- [x] Đặt `memory=8GB` trong `%UserProfile%\.wslconfig` rồi `wsl --shutdown` (VM Docker mặc định 7,4 GB → `docker info` MemTotal 8,33 GB); chưa bật `autoMemoryReclaim`
 - [x] Đo RAM khi bật toàn bộ dịch vụ (2026-11-25, nghỉ): tổng ≈ 3,0 GB — scheduler 0,6, ClickHouse 0,54, MLflow 0,44, api-server 0,32, Kafka 0,3, dag-processor 0,25, Superset 0,2, Iceberg REST 0,14, MinIO 0,1, Postgres 0,07 GB. Lúc chạy cộng thêm Spark (~1–2 GB, trong scheduler) và gpu-worker (~3 GB) → sát 7,4 GB của VM
 
 ### Dữ liệu ban đầu
@@ -72,8 +72,10 @@
 - [ ] Kiểm tra: 2.107 video, 168 creator, `text_emb` 2×768, `image_emb` 8×768 (PLAN mục 4.1)
 
 ### Mô hình
-- [ ] Tải `final_model.pt` + `kltn_model.py` của notebook v12 (`kaggle kernels output cngngquc/mainnotebook -p models/`)
-- [ ] Chép `kltn_model.py` vào `src/vicap/model/`, **giữ nguyên tên module** `kltn_model`; chỉ để `final_model.pt` trong `models/`
+- [x] Tải `final_model.pt` + `kltn_model.py` của notebook v12 (`kaggle kernels output cngngquc/mainnotebook -p models/`) — `TwoTower` concat, input `[1536, 768]`, 20 nhãn, ngưỡng 0,75, `zscore`; load + predict thử trong `gpu-worker` được
+- [x] Chép `kltn_model.py` vào `src/vicap/model/`, **giữ nguyên tên module** `kltn_model` (ruff bỏ qua file này); chỉ để `final_model.pt` trong `models/`
+- [x] `vicap.model.predict.build_p1_inputs`: `text_emb` → 1.536 theo thứ tự `[caption+hashtag ; ASR]`, `image_emb` → trung bình các ảnh có thật (chia cho số ảnh có, không chia 8) + test
+- [x] Kiểm tra `build_p1_inputs` trên cache Kaggle (`data/kaggle/mainnotebook/`, tải bằng `uvx --with six kaggle kernels output cngngquc/mainnotebook --file-pattern …`): 2.107 video, cosine với `V_frames` nhỏ nhất 0,9999998; `T_capasr` khớp tuyệt đối. Model cuối dùng `text_caphash_290eedc8` + `text_asr_chunked_PhoWhisper_medium_6ba74b77` (bản 2.107 video; hash khác là dataset cũ)
 - [ ] Chạy `register_p1.py` (log với `code_paths=[.../kltn_model.py]`) → `kltn-p1` phiên bản 1, alias `@champion`, ngưỡng 0,75
 - [ ] `vicap.model.predict.predict_batch`: gán nhãn theo `decide(..., at_least_one=True)` (PLAN mục 4.3)
 - [ ] Kiểm tra `predict_batch` trên 100 video Gold khớp xác suất và nhãn của notebook
@@ -81,7 +83,9 @@
 ### Pipeline
 - [x] `ingestion/`: crawler yt-dlp (theo kết quả Giai đoạn 0) → mp4 / ảnh slideshow + ảnh bìa + `info.json` (`itemStruct`) lên `raw/videos/{video_id}/` trước, rồi gửi message vào topic `tiktok.videos` (key `video_id`, metadata chính + key MinIO, PLAN mục 4.2); `vicap.pipelines.crawl.run_crawl` / `make crawl`; chạy thật 2 video + 1 slideshow (8 ảnh), message 0,7–1,1 KB, crawl lại không tải lại mp4
 - [ ] Điền `configs/creators.txt`: 25–30 creator Đợt B (mới, không có trong dataset v5)
-- [ ] `bronze/`: consumer kafka-python đọc tới `end_offsets` (so `position`), đọc message bằng `VideoMessage.from_bytes`, đọc `info.json` từ `raw/` vào cột `raw_json`, khử trùng theo `(batch_id, video_id)` (giữ `crawl_ts` mới nhất), ghi đè `bronze.videos_raw` theo `batch_id`, rồi mới commit offset; message lỗi parse / sai schema và message `status="error"` → `ops.quarantine`
+- [x] `bronze/`: consumer kafka-python đọc tới `end_offsets` (so `position`), đọc message bằng `VideoMessage.from_bytes`, đọc `info.json` từ `raw/` vào cột `raw_json`, khử trùng theo `(batch_id, video_id)` (giữ `crawl_ts` mới nhất), ghi đè `bronze.videos_raw` theo `batch_id`, rồi mới commit offset; message lỗi parse / sai schema và message `status="error"` → `ops.quarantine` — `vicap.pipelines.bronze.run_bronze` / `make bronze`; chạy thật 12 message (6 video × 2 lô) → 12 dòng, chạy lại 0 dòng; quarantine gộp theo `(stage, batch_id)` (`merge_quarantine_rows`), video đã vào Bronze thì bỏ khỏi quarantine
+- [x] Log bằng Loguru (`vicap.utils.log.setup_logging`): màu theo level khi chạy ở terminal, chữ trơn trong Airflow; log `logging` chuẩn của thư viện được chuyển sang Loguru; image Airflow / gpu-worker build lại có `loguru`
+- [x] Test integration không ghi vào bảng / bucket thật: fixture `iceberg_scratch` (namespace tạm), `kafka_topic` (topic tạm), test S3 tự xoá; đã dọn rác cũ trong `lakehouse/`
 - [ ] `silver/silver_clean.py` (Spark): làm sạch caption / hashtag, xác định `media_type` → `silver.videos` (`MERGE INTO` theo `video_id`)
 - [ ] `features/audio.py`: tách audio như `extract_audio.py` (`-vn -ar 16000 -ac 1 -b:a 64k` → mp3), bỏ audio < 1 s → `derived/audio/`
 - [ ] `features/asr.py`: PhoWhisper → `silver.transcripts`

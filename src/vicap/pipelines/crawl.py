@@ -9,14 +9,13 @@ Chạy tay (máy host, cần ``make up-crawl``)::
 from __future__ import annotations
 
 import argparse
-import logging
-import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from vicap.ingestion.crawler import CrawlStats, KafkaSink, RawStore, crawl_creators
 from vicap.ingestion.tiktok import TikTokClient
 from vicap.utils.dates import format_batch_id, now_utc
+from vicap.utils.log import setup_logging
 
 DEFAULT_CREATORS_FILE = Path("configs/creators.txt")
 DEFAULT_N = 10  # Đợt B: 10 video gần nhất mỗi creator (PLAN mục 3)
@@ -69,11 +68,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--cookies-from-browser", default=None, help="vd. firefox, khi bị TikTok chặn")
     args = ap.parse_args(argv)
 
-    for stream in (sys.stdout, sys.stderr):  # console Windows mặc định cp1252: không in được tiếng Việt
-        if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", errors="replace")
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    logging.getLogger("kafka").setLevel(logging.WARNING)  # kafka-python log mỗi lần kết nối ở mức INFO
+    setup_logging()
     creators = [c.strip().lstrip("@") for c in args.creators.split(",") if c.strip()] if args.creators else None
     stats = run_crawl(
         args.batch_id or format_batch_id(now_utc()),

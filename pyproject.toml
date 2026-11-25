@@ -16,6 +16,7 @@ dependencies = [
     "clickhouse-connect>=0.7",
     "python-dotenv>=1.0",
     "tenacity>=8.2",
+    "loguru>=0.7",
 ]
 
 [project.optional-dependencies]
@@ -44,6 +45,7 @@ markers = [
 [tool.ruff]
 line-length = 120
 src = ["src", "tests"]
+extend-exclude = ["src/vicap/model/kltn_model.py"]  # giữ nguyên bản của notebook v12
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]

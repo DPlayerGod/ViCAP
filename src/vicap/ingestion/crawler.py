@@ -20,12 +20,13 @@ theo ``(batch_id, video_id)``, giữ ``crawl_ts`` mới nhất.
 from __future__ import annotations
 
 import json
-import logging
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
+
+from loguru import logger
 
 from vicap.config import KafkaConfig, MinioConfig, crawler_minio_config
 from vicap.ingestion.message import VideoMessage
@@ -33,8 +34,6 @@ from vicap.ingestion.parse import SLIDESHOW, PostMeta, parse_item
 from vicap.storage import paths
 from vicap.storage.objects import s3_filesystem
 from vicap.utils.dates import now_utc
-
-log = logging.getLogger(__name__)
 
 MIN_VIDEO_BYTES = 10_000  # nhỏ hơn thì coi như tải hỏng (Giai đoạn 0)
 _CONTENT_TYPES = {"jpg": "image/jpeg", "png": "image/png"}
@@ -231,11 +230,11 @@ def crawl_creators(
             ids = client.list_post_ids(username, n)
         except Exception as e:  # noqa: BLE001 — ghi lại, sang creator tiếp
             stats.creator_errors[username] = f"{type(e).__name__}: {e}"[:300]
-            log.warning("[%s] không lấy được danh sách bài: %s", username, e)
+            logger.warning("[{}] không lấy được danh sách bài: {}", username, e)
             continue
         if not ids:
             stats.creator_errors[username] = "danh sách bài rỗng"
-            log.warning("[%s] danh sách bài rỗng", username)
+            logger.warning("[{}] danh sách bài rỗng", username)
             continue
 
         for k, video_id in enumerate(ids, 1):
@@ -251,7 +250,7 @@ def crawl_creators(
                     break
                 except Exception as e:  # noqa: BLE001 — lỗi tạm thời (vd. status=10231) thường qua khi thử lại
                     error = f"{type(e).__name__}: {e}"
-                    log.info("[%s %s] lần %d lỗi: %s", username, video_id, attempt + 1, error)
+                    logger.info("[{} {}] lần {} lỗi: {}", username, video_id, attempt + 1, error)
                     if attempt < retries:
                         pause(3 * (attempt + 1))
             else:
@@ -264,11 +263,11 @@ def crawl_creators(
             stats.ok += message.ok
             stats.failed += not message.ok
             stats.media_skipped += skipped
-            log.info(
-                "[%s %d/%d] %s %s%s", username, k, len(ids), video_id,
+            logger.info(
+                "[{} {}/{}] {} {}{}", username, k, len(ids), video_id,
                 message.media_type if message.ok else "LỖI " + (message.error or "")[:120],
                 " (mp4 có sẵn)" if skipped else "",
             )
             pause(sleep)
-    log.info(stats.summary())
+    logger.info(stats.summary())
     return stats

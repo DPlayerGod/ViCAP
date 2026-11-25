@@ -1,5 +1,5 @@
 .PHONY: up up-all down build ps stats logs test test-integration lint dag-trigger \
-        up-crawl up-spark up-gpu up-serving crawl
+        up-crawl up-spark up-gpu up-serving crawl bronze
 
 PROFILE ?= core
 DAG ?= daily_pipeline
@@ -74,6 +74,10 @@ lint:
 # Crawl từ máy host (cần make up-crawl): make crawl | make crawl CREATORS=a,b N=2
 crawl:
 	uv run python -m vicap.pipelines.crawl --n $(N) $(if $(CREATORS),--creators $(CREATORS))
+
+# Kafka → bronze.videos_raw từ máy host (cần make up PROFILE="core stream")
+bronze:
+	uv run python -m vicap.pipelines.bronze
 
 dag-trigger:
 	docker compose exec airflow-scheduler airflow dags trigger $(DAG)

@@ -5,7 +5,6 @@ Ghi vào topic tạm (tạo rồi xoá trong test) để Bronze không đọc nh
 
 from __future__ import annotations
 
-import socket
 import uuid
 
 import pytest
@@ -13,27 +12,6 @@ import pytest
 from test_ingestion import make_client  # tests/ nằm trong sys.path (pytest rootdir)
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture
-def kafka_topic():
-    from vicap.config import KafkaConfig
-
-    host, port = KafkaConfig().bootstrap_servers.split(",")[0].rsplit(":", 1)
-    try:
-        socket.create_connection((host, int(port)), timeout=3).close()
-    except OSError:
-        pytest.skip("Kafka chưa chạy — make up-crawl")
-    from kafka.admin import KafkaAdminClient, NewTopic
-
-    admin = KafkaAdminClient(bootstrap_servers=KafkaConfig().bootstrap_servers)
-    topic = f"it.videos.{uuid.uuid4().hex[:8]}"
-    admin.create_topics([NewTopic(topic, num_partitions=3, replication_factor=1)])
-    try:
-        yield topic
-    finally:
-        admin.delete_topics([topic])
-        admin.close()
 
 
 def test_crawl_to_minio_and_kafka(kafka_topic, monkeypatch) -> None:

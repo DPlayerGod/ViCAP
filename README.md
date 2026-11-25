@@ -61,6 +61,16 @@ uv run python -m vicap.pipelines.crawl --help
 
 Mỗi bài: file lên `raw/videos/{video_id}/` (`video.mp4` hoặc `img_NNN.*`, `cover.*`, `info.json`) bằng user MinIO `vicap-crawler`, rồi một message vào topic `tiktok.videos`. Bài lỗi sau 3 lần thử vẫn có message `status="error"`. TikTok chặn thì thêm `--cookies-from-browser firefox`.
 
+## Bronze
+
+```bash
+make bronze      # tiktok.videos → bronze.videos_raw (cần make up PROFILE="core stream")
+```
+
+Đọc message mới từ offset đã commit của group `bronze-writer` tới cuối topic, đọc `info.json` từ `raw/`, khử trùng theo `(batch_id, video_id)`, ghi đè `bronze.videos_raw` theo `batch_id`, rồi mới commit offset. Chạy lại không sinh dòng trùng. Message hỏng, `info.json` không đọc được (stage `bronze_videos`) và bài crawl lỗi (stage `crawl`) vào `ops.quarantine`.
+
+**Iceberg REST báo lỗi 500 sau khi khởi động lại Docker / `wsl --shutdown`** (`UncheckedSQLException: Failed to execute query`): Docker bật lại `iceberg-rest` trước Postgres, catalog giữ kết nối JDBC hỏng. Chạy `docker compose restart iceberg-rest`.
+
 ## Test
 
 ```bash

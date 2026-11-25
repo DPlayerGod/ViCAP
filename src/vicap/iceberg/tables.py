@@ -73,18 +73,36 @@ class TableDef:
     key: tuple[str, ...] = ()
 
 
+# Một dòng = một message ``status="ok"`` của ``tiktok.videos`` (vicap.ingestion.message.VideoMessage) +
+# ``info.json`` (itemStruct gốc) đọc từ raw/. Khoá (batch_id, video_id): cùng video crawl ở hai lô là hai dòng.
 BRONZE_VIDEOS_RAW_SCHEMA = _schema(
     ("video_id", StringType(), True),
     ("username", StringType(), True),
-    ("posted_at", TimestamptzType(), False),
-    ("duration", IntegerType(), False),  # giây
-    ("media_type", StringType(), False),  # video / slideshow (PLAN mục 4.1)
-    ("media_key", StringType(), False),  # videos/{video_id}/video.mp4 hoặc videos/{video_id}/ (slideshow)
-    ("thumbnail_key", StringType(), False),  # videos/{video_id}/cover.{jpg|png}
-    ("raw_json", StringType(), False),
-    ("crawl_ts", TimestamptzType(), True),
     ("batch_id", StringType(), True),
+    ("crawl_ts", TimestamptzType(), True),
+    ("media_type", StringType(), True),  # video / slideshow (PLAN mục 4.1)
+    ("posted_at", TimestamptzType(), True),
+    ("description", StringType(), False),  # caption gốc, gồm cả #hashtag
+    ("hashtags", STRING_LIST, True),
+    ("duration", IntegerType(), False),  # giây
+    ("width", IntegerType(), False),
+    ("height", IntegerType(), False),
+    ("play_count", LongType(), False),
+    ("like_count", LongType(), False),
+    ("comment_count", LongType(), False),
+    ("share_count", LongType(), False),
+    ("save_count", LongType(), False),
+    ("follower_count", LongType(), False),
+    # key trong bucket raw
+    ("info_key", StringType(), True),  # videos/{video_id}/info.json
+    ("media_key", StringType(), True),  # videos/{video_id}/video.mp4 hoặc videos/{video_id}/ (slideshow)
+    ("thumbnail_key", StringType(), False),  # videos/{video_id}/cover.{jpg|png}
+    ("image_keys", STRING_LIST, True),  # slideshow: img_001…; video: rỗng
+    ("raw_json", StringType(), True),  # info.json lúc ghi Bronze (raw/ chỉ giữ lần crawl mới nhất)
+    ("kafka_partition", IntegerType(), True),
+    ("kafka_offset", LongType(), True),
     ("processing_date", DateType(), True),
+    ("ingested_at", TimestamptzType(), True),
 )
 
 BRONZE_CREATORS_RAW_SCHEMA = _schema(
