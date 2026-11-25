@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -68,6 +69,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--cookies-from-browser", default=None, help="vd. firefox, khi bị TikTok chặn")
     args = ap.parse_args(argv)
 
+    for stream in (sys.stdout, sys.stderr):  # console Windows mặc định cp1252: không in được tiếng Việt
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("kafka").setLevel(logging.WARNING)  # kafka-python log mỗi lần kết nối ở mức INFO
     creators = [c.strip().lstrip("@") for c in args.creators.split(",") if c.strip()] if args.creators else None
