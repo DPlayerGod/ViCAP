@@ -1,0 +1,8 @@
+# Creator cho bước crawl (vicap.pipelines.crawl, PLAN mục 3).
+# Mỗi dòng một username TikTok (có hoặc không có @); "#" là comment.
+# Đợt B: 25–30 creator MỚI (không có trong dataset v5), 10 video gần nhất, không chọn lọc.
+# Không dùng 8 creator của phase0/test_creators.txt: họ nằm trong dữ liệu train.
+
+# Thử trước (chưa phải danh sách Đợt B)
+hoanganhquan_blv
+radiovietnam.sound

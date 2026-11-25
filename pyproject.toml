@@ -19,8 +19,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Image Airflow đã có apache-airflow, không cài lại.
-airflow = ["apache-airflow-providers-docker>=3.9", "kafka-python>=2.0.2", "yt-dlp[default]==2026.11.23"]
+# Image Airflow đã có apache-airflow, không cài lại. Bước crawl chạy trong Airflow nên [airflow] gồm cả [crawler].
+airflow = ["apache-airflow-providers-docker>=3.9", "kafka-python>=2.1", "yt-dlp[default]==2026.11.23"]
+# Chạy crawl trên máy host (Windows không cài được apache-airflow): uv sync --extra dev --extra crawler
+crawler = ["kafka-python>=2.1", "yt-dlp[default]==2026.11.23"]
 spark = ["pyspark>=3.5,<3.6"]
 gpu = ["torch", "transformers", "pyvi", "mlflow==2.22.1", "opencv-python-headless", "pillow"]
 # scripts/ của Giai đoạn 0

@@ -1,8 +1,9 @@
 .PHONY: up up-all down build ps stats logs test test-integration lint dag-trigger \
-        up-crawl up-spark up-gpu up-serving
+        up-crawl up-spark up-gpu up-serving crawl
 
 PROFILE ?= core
 DAG ?= daily_pipeline
+N ?= 10
 ALL_PROFILES := core stream pipeline ml serving
 PROFILE_FLAGS = $(foreach p,$(PROFILE),--profile $(p))
 DC := docker compose --profile "*"
@@ -69,6 +70,10 @@ test-integration:
 
 lint:
 	uv run ruff check src tests dags
+
+# Crawl từ máy host (cần make up-crawl): make crawl | make crawl CREATORS=a,b N=2
+crawl:
+	uv run python -m vicap.pipelines.crawl --n $(N) $(if $(CREATORS),--creators $(CREATORS))
 
 dag-trigger:
 	docker compose exec airflow-scheduler airflow dags trigger $(DAG)

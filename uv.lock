@@ -6966,6 +6966,10 @@ api = [
     { name = "fastapi" },
     { name = "uvicorn", extra = ["standard"] },
 ]
+crawler = [
+    { name = "kafka-python" },
+    { name = "yt-dlp", extra = ["default"] },
+]
 dev = [
     { name = "pyiceberg", extra = ["sql-sqlite"] },
     { name = "pytest" },
@@ -6995,7 +6999,8 @@ requires-dist = [
     { name = "apache-airflow-providers-docker", marker = "extra == 'airflow'", specifier = ">=3.9" },
     { name = "clickhouse-connect", specifier = ">=0.7" },
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.110" },
-    { name = "kafka-python", marker = "extra == 'airflow'", specifier = ">=2.0.2" },
+    { name = "kafka-python", marker = "extra == 'airflow'", specifier = ">=2.1" },
+    { name = "kafka-python", marker = "extra == 'crawler'", specifier = ">=2.1" },
     { name = "mlflow", marker = "extra == 'gpu'", specifier = "==2.22.1" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python-headless", marker = "extra == 'gpu'" },
@@ -7017,9 +7022,10 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'gpu'" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'api'", specifier = ">=0.29" },
     { name = "yt-dlp", extras = ["default"], marker = "extra == 'airflow'", specifier = "==2026.11.23" },
+    { name = "yt-dlp", extras = ["default"], marker = "extra == 'crawler'", specifier = "==2026.11.23" },
     { name = "yt-dlp", extras = ["default"], marker = "extra == 'scripts'", specifier = "==2026.11.23" },
 ]
-provides-extras = ["airflow", "spark", "gpu", "scripts", "api", "dev"]
+provides-extras = ["airflow", "crawler", "spark", "gpu", "scripts", "api", "dev"]
 
 [[package]]
 name = "waitress"

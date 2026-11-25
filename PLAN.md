@@ -147,8 +147,8 @@ Các phần cách nhau bằng hai dấu gạch dưới. Phần thời gian là l
 
 - Bucket `raw` — **lớp 0**, nằm ngoài Iceberg, **chỉ crawler ghi**. Mỗi video một thư mục, `raw_video(video_id, name)`:
   - `videos/{video_id}/video.mp4` (video thường)
-  - `videos/{video_id}/info.json` (metadata yt-dlp đầy đủ; crawl lại thì ghi đè, lịch sử nằm ở cột `raw_json` của Bronze)
-  - `videos/{video_id}/img_{NNN}.{jpg|png}` (slideshow, đánh số từ 1) — **chưa có, còn để mở**: yt-dlp chưa tải được ảnh slideshow (Giai đoạn 0), xem "Slideshow — còn để mở" ở mục 4.1. Key đã định sẵn để crawler dùng khi có cách lấy ảnh.
+  - `videos/{video_id}/info.json` (`itemStruct` gốc của TikTok, ~20–30 KB; không dùng `info.json` của yt-dlp vì có cookie, header và URL ký tạm; crawl lại thì ghi đè, lịch sử nằm ở cột `raw_json` của Bronze)
+  - `videos/{video_id}/img_{NNN}.{jpg|png}` (slideshow, đánh số từ 1, nguyên bytes): crawler lấy từ `imagePost` của `itemStruct` (đã chạy thật: 8/8 ảnh). Cách dựng 8 ảnh cho embedding từ các ảnh này vẫn còn để mở (mục 4.1).
   - `videos/{video_id}/cover.{jpg|png}` (ảnh bìa, nguyên bytes, mục 4.1)
 - Bucket `lakehouse`:
   - `derived/frames/{video_id}_{k}.jpg` (`frame(video_id, k)`; cả 8 ảnh JPEG 640px, mục 4.1), `derived/audio/{video_id}.mp3` (16 kHz mono 64 kbps): gpu-worker sinh từ `raw`
@@ -167,7 +167,9 @@ Không có tầng staging Parquet như HOSE: metadata đi qua Kafka vào thẳng
 - 3 partition, 1 replica (1 broker). Key `video_id` nên các lần crawl lại cùng một video vào cùng partition, giữ đúng thứ tự.
 - Retention 7 ngày: Bronze mới là nơi lưu lâu dài; Kafka chỉ cần giữ đủ để chạy lại khi DAG lỗi vài ngày.
 - Message không chứa mp4 hay toàn bộ `info.json`: crawler đẩy file lên `raw/` trước, rồi mới gửi message mang key (mỗi message vài KB, dưới xa giới hạn 1 MB). Bronze writer đọc `info.json` từ `raw/` và chép vào cột `raw_json`, vì `raw/` chỉ giữ bản crawl mới nhất.
-- Không có topic DLQ: message lỗi parse / sai schema bị cách ly theo dòng vào `ops.quarantine` như các bước khác (mục 9.3), chỉ một chỗ xem lỗi.
+- Không có topic DLQ: message lỗi parse / sai schema bị cách ly theo dòng vào `ops.quarantine` như các bước khác (mục 9.3), chỉ một chỗ xem lỗi. Bài crawler không tải được sau 3 lần thử vẫn gửi message `status="error"` để Bronze ghi vào `ops.quarantine` (stage `crawl`).
+- Schema message: `vicap.ingestion.message.VideoMessage` (trường `v` = phiên bản); Bronze đọc bằng `VideoMessage.from_bytes`, lỗi thì `MessageError`.
+- Crawl lại: mp4 đã có trên `raw/` thì không tải lại (chỉ cập nhật lượt xem / thích, ảnh bìa, `info.json`), trừ khi `--refresh-media`. Task crawl retry sẽ gửi lại message cùng `batch_id` → Bronze khử trùng theo `(batch_id, video_id)`, giữ `crawl_ts` mới nhất.
 - `infra/kafka/create_topics.sh` (service `kafka-init`) chạy lại được: topic đã có thì tăng partition và đặt lại retention. Topic `tiktok.creators` để comment tới Giai đoạn 2.
 
 ### 4.3. Gán nhãn và hồ sơ

@@ -5,7 +5,7 @@ Hệ thống xử lý theo lô cho khoá luận: thu thập video TikTok, phân 
 ## Cài đặt
 
 ```bash
-uv sync --extra dev --extra scripts     # thêm --extra spark / gpu / airflow khi cần
+uv sync --extra dev --extra scripts --extra crawler   # thêm --extra spark / gpu khi cần ([airflow] chỉ cài trong image)
 cp .env.example .env                    # điền mật khẩu; không commit .env
 ```
 
@@ -49,6 +49,18 @@ Windows chưa có `make`: `winget install ezwinports.make` (hoặc chạy lệnh
 
 Kiểm tra: trigger DAG `infra_smoke` (Spark `MERGE INTO` trên Iceberg, PyIceberg + MinIO, GPU) và `make test-integration`.
 
+## Crawl
+
+Điền username vào `configs/creators.txt` (mỗi dòng một creator), bật Kafka (`make up-crawl`), rồi:
+
+```bash
+make crawl                              # n=10 bài gần nhất mỗi creator trong configs/creators.txt
+make crawl CREATORS=user_a,user_b N=2   # creator chỉ định
+uv run python -m vicap.pipelines.crawl --help
+```
+
+Mỗi bài: file lên `raw/videos/{video_id}/` (`video.mp4` hoặc `img_NNN.*`, `cover.*`, `info.json`) bằng user MinIO `vicap-crawler`, rồi một message vào topic `tiktok.videos`. Bài lỗi sau 3 lần thử vẫn có message `status="error"`. TikTok chặn thì thêm `--cookies-from-browser firefox`.
+
 ## Test
 
 ```bash
@@ -60,9 +72,9 @@ Test `integration` cần dịch vụ docker-compose (`make up PROFILE=core`); d�
 
 ## Cấu trúc
 
-- `src/vicap/`: `config`, `iceberg/` (catalog, reader, writer, tables), `quality/` (check PyArrow + NumPy, suite theo bảng), `storage/` (key MinIO + quy ước tên file, đọc / ghi object, quarantine), `clickhouse/`. Các package `ingestion/`, `bronze/`, `silver/`, `features/`, `model/`, `gold/`, `pipelines/` mới có khung.
+- `src/vicap/`: `config`, `iceberg/` (catalog, reader, writer, tables), `quality/` (check PyArrow + NumPy, suite theo bảng), `storage/` (key MinIO + quy ước tên file, đọc / ghi object, quarantine), `clickhouse/`. `ingestion/` (crawler yt-dlp: `parse`, `message` Kafka, `tiktok`, `crawler`), `pipelines/crawl`. Các package `bronze/`, `silver/`, `features/`, `model/`, `gold/` mới có khung.
 - `dags/`: định nghĩa DAG Airflow, mỗi task gọi một `vicap.pipelines.run_<bước>`.
 - `apps/`: `backend/` (FastAPI, `pip install .[api]`), `frontend/` (Vite + React).
 - `infra/`: Dockerfile và cấu hình từng service (airflow, gpu_worker, postgres, minio, clickhouse, kafka, mlflow, superset); `docker-compose.yml` ở gốc.
-- `configs/`: hashtag, lịch crawl lại.
+- `configs/`: `creators.txt` (creator cần crawl); sau này hashtag, lịch crawl lại.
 - `scripts/`: script Giai đoạn 0 (yt-dlp). Input của phép đối chiếu nằm ở `phase0/phase0_inputs/`.

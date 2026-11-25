@@ -79,8 +79,9 @@
 - [ ] Kiểm tra `predict_batch` trên 100 video Gold khớp xác suất và nhãn của notebook
 
 ### Pipeline
-- [ ] `ingestion/`: crawler yt-dlp (theo kết quả Giai đoạn 0) → mp4 / ảnh slideshow + ảnh bìa + `info.json` lên `raw/videos/{video_id}/` bằng `storage.objects.put_bytes` trước, rồi gửi message vào topic `tiktok.videos` (key `video_id`, metadata chính + key MinIO, PLAN mục 4.2)
-- [ ] `bronze/`: consumer kafka-python đọc tới `end_offsets` (so `position`), đọc `info.json` từ `raw/` vào cột `raw_json`, ghi đè `bronze.videos_raw` theo `batch_id`, rồi mới commit offset; message lỗi parse / sai schema → `ops.quarantine`
+- [x] `ingestion/`: crawler yt-dlp (theo kết quả Giai đoạn 0) → mp4 / ảnh slideshow + ảnh bìa + `info.json` (`itemStruct`) lên `raw/videos/{video_id}/` trước, rồi gửi message vào topic `tiktok.videos` (key `video_id`, metadata chính + key MinIO, PLAN mục 4.2); `vicap.pipelines.crawl.run_crawl` / `make crawl`; chạy thật 2 video + 1 slideshow (8 ảnh), message 0,7–1,1 KB, crawl lại không tải lại mp4
+- [ ] Điền `configs/creators.txt`: 25–30 creator Đợt B (mới, không có trong dataset v5)
+- [ ] `bronze/`: consumer kafka-python đọc tới `end_offsets` (so `position`), đọc message bằng `VideoMessage.from_bytes`, đọc `info.json` từ `raw/` vào cột `raw_json`, khử trùng theo `(batch_id, video_id)` (giữ `crawl_ts` mới nhất), ghi đè `bronze.videos_raw` theo `batch_id`, rồi mới commit offset; message lỗi parse / sai schema và message `status="error"` → `ops.quarantine`
 - [ ] `silver/silver_clean.py` (Spark): làm sạch caption / hashtag, xác định `media_type` → `silver.videos` (`MERGE INTO` theo `video_id`)
 - [ ] `features/audio.py`: tách audio như `extract_audio.py` (`-vn -ar 16000 -ac 1 -b:a 64k` → mp3), bỏ audio < 1 s → `derived/audio/`
 - [ ] `features/asr.py`: PhoWhisper → `silver.transcripts`
