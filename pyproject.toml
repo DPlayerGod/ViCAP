@@ -22,7 +22,7 @@ dependencies = [
 # Image Airflow đã có apache-airflow, không cài lại.
 airflow = ["apache-airflow-providers-docker>=3.9", "kafka-python>=2.0.2", "yt-dlp[default]==2026.11.23"]
 spark = ["pyspark>=3.5,<3.6"]
-gpu = ["torch", "transformers", "pyvi", "mlflow", "opencv-python-headless", "pillow"]
+gpu = ["torch", "transformers", "pyvi", "mlflow==2.22.1", "opencv-python-headless", "pillow"]
 # scripts/ của Giai đoạn 0
 scripts = ["yt-dlp[default]==2026.11.23", "pandas", "opencv-python-headless", "pillow"]
 api = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]
@@ -46,3 +46,9 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 ignore = ["UP042"]  # giữ `class X(str, Enum)` như HOSE
+
+[tool.uv]
+# [airflow] / [spark] cài trong image Airflow, [gpu] trong image gpu-worker: không bao giờ chung một môi trường.
+conflicts = [
+    [{ extra = "gpu" }, { extra = "airflow" }],
+]

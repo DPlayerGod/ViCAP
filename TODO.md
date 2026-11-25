@@ -49,19 +49,23 @@
 - [ ] Xác nhận checkpoint PhoBERT của notebook v12 (đang để `vinai/phobert-base` trong `ModelConfig.text_encoder`)
 
 ### Hạ tầng
-- [ ] `docker-compose.yml` (từ compose HOSE, ghim phiên bản image): profile `core` (Postgres, MinIO, Iceberg REST, ClickHouse), `stream` (Kafka), `pipeline` (Airflow + Spark local), `ml` (MLflow, image `gpu-worker`), `serving` (Superset)
-- [ ] `.env.example` cho mật khẩu; `.env` thật đưa vào `.gitignore`
-- [ ] Tạo bucket MinIO: `raw` (lớp 0: mp4, ảnh bìa, ảnh slideshow; chỉ crawler có quyền ghi), `lakehouse` (`derived/` frame + audio, quarantine, Iceberg), `mlflow` (artifact); không mở bucket public
-- [ ] Postgres: tạo DB `airflow`, `mlflow`, `superset`
-- [ ] Iceberg catalog REST (`tabulario/iceberg-rest`, JDBC trên Postgres) cho cả PyIceberg và Spark
-- [ ] `infra/airflow/Dockerfile`: OpenJDK 17, `pyspark` 3.5.x, jar `iceberg-spark-runtime-3.5_2.12` + `iceberg-aws-bundle`; SparkSession có `spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions`
-- [ ] `infra/gpu_worker/Dockerfile`: base CUDA + torch, `pip install .[gpu]`
-- [ ] Cài NVIDIA Container Toolkit trên host; kiểm tra `docker run --gpus all … nvidia-smi`
-- [ ] Airflow mount `/var/run/docker.sock`; DockerOperator có `device_requests` (GPU) và `network_mode="lakehouse_network"`
-- [ ] `infra/superset/Dockerfile` cài `clickhouse-connect`
-- [ ] `infra/clickhouse/init.sql` (DDL 3 bảng phục vụ), `infra/kafka/create_topics.sh` (topic `tiktok.videos`)
-- [ ] `dags/.airflowignore`; compose mount `./dags` vào Airflow, build từ `./infra/<service>`
-- [ ] Đo RAM khi bật toàn bộ dịch vụ; nếu thiếu thì chia docker-compose profile
+- [x] `docker-compose.yml` (từ compose HOSE, ghim phiên bản image, bí mật `${VAR:?}`, `mem_limit`): profile `core` (Postgres, MinIO, Iceberg REST, ClickHouse), `stream` (Kafka), `pipeline` (Airflow 3.4 + Spark local + `docker-proxy`), `ml` (MLflow, image `gpu-worker`), `serving` (Superset)
+- [x] MinIO: image Chainguard (image chính thức bị gỡ 10/2025), ghim digest
+- [x] `.env.example` cho mật khẩu; `.env` thật đưa vào `.gitignore`; địa chỉ host dùng `localhost`; cổng compose chỉ mở trên loopback 127.0.0.1
+- [x] Windows + WSL `networkingMode=mirrored`: `localhost` → `::1` trước, kết nối ::1 vào Docker treo ~21 s (PyArrow S3 lỗi luôn) → chạy (Admin) `netsh interface ipv6 set prefixpolicy ::ffff:0:0/96 60 4` để ưu tiên IPv4
+- [x] Tạo bucket MinIO: `raw` (lớp 0: mp4, ảnh bìa, ảnh slideshow; chỉ crawler có quyền ghi), `lakehouse` (`derived/` frame + audio, quarantine, Iceberg), `mlflow` (artifact); không mở bucket public
+- [x] User MinIO `vicap-crawler` (ghi `raw`) / `vicap-pipeline` (đọc `raw`, ghi `lakehouse` + `mlflow`) + `crawler_minio_config()`; đã thử quyền bằng `mc` và `tests/test_integration_infra.py`
+- [x] Postgres: tạo DB `airflow`, `iceberg`, `mlflow`, `superset` (`infra/postgres/init.sh`)
+- [x] Iceberg catalog REST (`tabulario/iceberg-rest:1.6.0`, JDBC trên Postgres) cho cả PyIceberg và Spark; test `ops.quarantine` qua REST thật
+- [x] `infra/airflow/Dockerfile`: Airflow 3.4.0 (Debian 13: JRE 17 chép từ `eclipse-temurin:17-jre`), OpenJDK 17, `pyspark` 3.5.x, jar `iceberg-spark-runtime-3.5_2.12` + `iceberg-aws-bundle` 1.6.1; `vicap.spark.get_spark` có `spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions` (`spark_conf` + test xong)
+- [x] `infra/gpu_worker/Dockerfile`: base `pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime`, `pip install .[gpu]` (mlflow ghim 2.22.1 cho khớp server)
+- [x] Kiểm tra GPU trong container (RTX 3050 Laptop, `torch 2.5.1+cu121`): Docker Desktop (WSL2) tự có GPU, không cần NVIDIA Container Toolkit; `docker compose --profile ml run --rm gpu-worker`
+- [x] DockerOperator qua `docker-proxy` (không mount socket vào Airflow): `dags/common/gpu.py` có `device_requests` (GPU), `network_mode="lakehouse_network"`, volume `vicap_hf_cache`; DAG `infra_smoke` chạy xanh
+- [x] `infra/superset/Dockerfile` cài `clickhouse-connect`; Superset kết nối được ClickHouse (`clickhousedb://…/vicap`)
+- [x] `infra/clickhouse/init.sql` (DDL 3 bảng phục vụ), `infra/kafka/create_topics.sh` (topic `tiktok.videos`: 3 partition, retention 7 ngày, chạy lại được)
+- [x] `dags/.airflowignore`; compose mount `./dags` vào Airflow, build từ `./infra/<service>`
+- [ ] Đặt `memory=8GB` + `autoMemoryReclaim=gradual` trong `%UserProfile%\.wslconfig` rồi `wsl --shutdown` (VM Docker mặc định 7,4 GB)
+- [x] Đo RAM khi bật toàn bộ dịch vụ (2026-11-25, nghỉ): tổng ≈ 3,0 GB — scheduler 0,6, ClickHouse 0,54, MLflow 0,44, api-server 0,32, Kafka 0,3, dag-processor 0,25, Superset 0,2, Iceberg REST 0,14, MinIO 0,1, Postgres 0,07 GB. Lúc chạy cộng thêm Spark (~1–2 GB, trong scheduler) và gpu-worker (~3 GB) → sát 7,4 GB của VM
 
 ### Dữ liệu ban đầu
 - [ ] Viết job nạp dataset v5 (nhãn, metadata, transcript, embedding `.npz`) vào Bronze / Silver / Gold
@@ -75,8 +79,8 @@
 - [ ] Kiểm tra `predict_batch` trên 100 video Gold khớp xác suất và nhãn của notebook
 
 ### Pipeline
-- [ ] `ingestion/`: crawler yt-dlp (theo kết quả Giai đoạn 0) → metadata vào Kafka topic `tiktok.videos`, mp4 / ảnh slideshow + ảnh bìa lên `raw/videos/{video_id}/` bằng `storage.objects.put_bytes`, message Kafka mang key (PLAN mục 4.2)
-- [ ] `bronze/`: consumer kafka-python đọc tới `end_offsets` (so `position`), ghi đè `bronze.videos_raw` theo `batch_id`, rồi mới commit offset
+- [ ] `ingestion/`: crawler yt-dlp (theo kết quả Giai đoạn 0) → mp4 / ảnh slideshow + ảnh bìa + `info.json` lên `raw/videos/{video_id}/` bằng `storage.objects.put_bytes` trước, rồi gửi message vào topic `tiktok.videos` (key `video_id`, metadata chính + key MinIO, PLAN mục 4.2)
+- [ ] `bronze/`: consumer kafka-python đọc tới `end_offsets` (so `position`), đọc `info.json` từ `raw/` vào cột `raw_json`, ghi đè `bronze.videos_raw` theo `batch_id`, rồi mới commit offset; message lỗi parse / sai schema → `ops.quarantine`
 - [ ] `silver/silver_clean.py` (Spark): làm sạch caption / hashtag, xác định `media_type` → `silver.videos` (`MERGE INTO` theo `video_id`)
 - [ ] `features/audio.py`: tách audio như `extract_audio.py` (`-vn -ar 16000 -ac 1 -b:a 64k` → mp3), bỏ audio < 1 s → `derived/audio/`
 - [ ] `features/asr.py`: PhoWhisper → `silver.transcripts`
@@ -106,7 +110,7 @@
 ## Giai đoạn 2 — Mở rộng
 
 - [ ] `configs/hashtags.yaml`: danh sách hashtag theo nhãn
-- [ ] Task `discover`: tìm creator mới theo hashtag, lọc theo follower, ghi `bronze.creators_raw`
+- [ ] Task `discover`: tìm creator mới theo hashtag, lọc theo follower → topic `tiktok.creators` (key `username`; bỏ comment trong `create_topics.sh`) → Bronze writer ghi `bronze.creators_raw`
 - [ ] DAG `recrawl`: crawl lại theo tần suất đăng
 - [ ] Chọn cách gộp hồ sơ theo số video (dưới 10: trung bình xác suất; từ 10: đếm nhãn)
 - [ ] Cờ đổi hướng nội dung (cosine hồ sơ mới so với cũ)

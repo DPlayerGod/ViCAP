@@ -4,7 +4,7 @@ Hàm ở đây chỉ dựng key (không có ``s3://`` và bucket); bucket lấy 
 
 - Bucket ``raw`` (``MinioConfig.raw_bucket``) — lớp 0, nằm ngoài Iceberg, **chỉ crawler ghi**:
   ``raw_video(video_id, name)`` → ``videos/{video_id}/{name}`` với ``name`` là ``video.mp4``,
-  ``cover.{jpg|png}`` hoặc ``img_{NNN}.{jpg|png}`` (slideshow).
+  ``info.json``, ``cover.{jpg|png}`` hoặc ``img_{NNN}.{jpg|png}`` (slideshow).
 - Bucket ``lakehouse`` (``MinioConfig.bucket``): ``frame`` / ``audio`` do gpu-worker sinh ra từ ``raw``,
   ``quarantine`` cho lô / dòng bị cách ly, ``warehouse/`` của Iceberg.
 
@@ -27,12 +27,13 @@ N_FRAMES = 8  # _0 ảnh bìa, _1…_7 frame (PLAN mục 4.1)
 IMAGE_EXTS = ("jpg", "png")
 
 VIDEO_FILE = "video.mp4"
+INFO_FILE = "info.json"  # metadata yt-dlp đầy đủ; message Kafka chỉ mang key tới file này
 
 _VIDEO_ID = re.compile(r"^\d+$")
 _POSTED_AT = re.compile(r"^\d{8}_\d{6}$")
 _IMG_SUFFIX = re.compile(r"__img_\d+$")
 _EXT = re.compile(r"\.[A-Za-z][A-Za-z0-9]{1,4}$")
-_RAW_NAME = re.compile(r"^(video\.mp4|cover\.(jpg|png)|img_\d{3}\.(jpg|png))$")
+_RAW_NAME = re.compile(r"^(video\.mp4|info\.json|cover\.(jpg|png)|img_\d{3}\.(jpg|png))$")
 _SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
@@ -79,7 +80,10 @@ def raw_prefix(video_id: str) -> str:
 
 
 def raw_video(video_id: str, name: str) -> str:
-    """``videos/{video_id}/{name}``; ``name`` ∈ ``video.mp4``, ``cover.{jpg|png}``, ``img_{NNN}.{jpg|png}``."""
+    """``videos/{video_id}/{name}``.
+
+    ``name`` ∈ ``video.mp4``, ``info.json``, ``cover.{jpg|png}``, ``img_{NNN}.{jpg|png}``.
+    """
     if not _RAW_NAME.match(name):
         raise ValueError(f"tên file raw không hợp lệ: {name!r}")
     return raw_prefix(video_id) + name

@@ -41,7 +41,7 @@ Vòng cập nhật: ClickHouse chọn creator cần crawl lại / creator mới 
 | Mô hình | MLflow + P1 (`final_model.pt`, ngưỡng 0,75); `predict` chạy trong `gpu-worker` | Dự đoán 20 nhãn (đa nhãn, mục 4.3); quản lý phiên bản |
 | Phục vụ | ClickHouse + Superset | Truy vấn nhanh, dashboard phân tích nội bộ |
 | Ứng dụng web | FastAPI (`apps/backend/`) + web (`apps/frontend/`) | Người dùng tìm creator theo nhóm nội dung, xem hồ sơ, so sánh creator |
-| Điều phối | Airflow (LocalExecutor) | DAG theo ngày, thử lại khi lỗi |
+| Điều phối | Airflow 3.4 (LocalExecutor) | DAG theo ngày, thử lại khi lỗi |
 
 ## 3. Giai đoạn
 
@@ -147,6 +147,7 @@ Các phần cách nhau bằng hai dấu gạch dưới. Phần thời gian là l
 
 - Bucket `raw` — **lớp 0**, nằm ngoài Iceberg, **chỉ crawler ghi**. Mỗi video một thư mục, `raw_video(video_id, name)`:
   - `videos/{video_id}/video.mp4` (video thường)
+  - `videos/{video_id}/info.json` (metadata yt-dlp đầy đủ; crawl lại thì ghi đè, lịch sử nằm ở cột `raw_json` của Bronze)
   - `videos/{video_id}/img_{NNN}.{jpg|png}` (slideshow, đánh số từ 1) — **chưa có, còn để mở**: yt-dlp chưa tải được ảnh slideshow (Giai đoạn 0), xem "Slideshow — còn để mở" ở mục 4.1. Key đã định sẵn để crawler dùng khi có cách lấy ảnh.
   - `videos/{video_id}/cover.{jpg|png}` (ảnh bìa, nguyên bytes, mục 4.1)
 - Bucket `lakehouse`:
@@ -155,6 +156,19 @@ Các phần cách nhau bằng hai dấu gạch dưới. Phần thời gian là l
   - `warehouse/`: bảng Iceberg
 
 Không có tầng staging Parquet như HOSE: metadata đi qua Kafka vào thẳng `bronze.videos_raw` (cột `raw_json` + key `media_key`, `thumbnail_key` trỏ vào `raw`).
+
+**Kafka — topic.** Kafka chỉ nằm ở chỗ crawler giao dữ liệu cho pipeline. Từ Bronze trở đi các bước truyền qua bảng Iceberg theo `batch_id`, nên không có topic cho từng bước (features, predictions, …).
+
+| Topic | Giai đoạn | Producer → Consumer | Key | Value | Ghi vào |
+|---|---|---|---|---|---|
+| `tiktok.videos` | 1 | crawler → Bronze writer | `video_id` | `video_id`, `username`, `crawl_ts`, các trường metadata chính, key MinIO tới `info.json` / `video.mp4` / `cover.*` | `bronze.videos_raw` |
+| `tiktok.creators` | 2 | task `discover` (tìm theo hashtag) → Bronze writer | `username` | `username`, follower, hashtag nguồn, `discovered_ts` | `bronze.creators_raw` |
+
+- 3 partition, 1 replica (1 broker). Key `video_id` nên các lần crawl lại cùng một video vào cùng partition, giữ đúng thứ tự.
+- Retention 7 ngày: Bronze mới là nơi lưu lâu dài; Kafka chỉ cần giữ đủ để chạy lại khi DAG lỗi vài ngày.
+- Message không chứa mp4 hay toàn bộ `info.json`: crawler đẩy file lên `raw/` trước, rồi mới gửi message mang key (mỗi message vài KB, dưới xa giới hạn 1 MB). Bronze writer đọc `info.json` từ `raw/` và chép vào cột `raw_json`, vì `raw/` chỉ giữ bản crawl mới nhất.
+- Không có topic DLQ: message lỗi parse / sai schema bị cách ly theo dòng vào `ops.quarantine` như các bước khác (mục 9.3), chỉ một chỗ xem lỗi.
+- `infra/kafka/create_topics.sh` (service `kafka-init`) chạy lại được: topic đã có thì tăng partition và đặt lại retention. Topic `tiktok.creators` để comment tới Giai đoạn 2.
 
 ### 4.3. Gán nhãn và hồ sơ
 
@@ -190,11 +204,11 @@ discover ──> crawl ──> bronze ──> silver_clean ──> asr ──> e
 | Spark (local) | 2–4 GB |
 | Kafka (KRaft, 1 broker) | ~1 GB |
 | ClickHouse | 1–2 GB |
-| Airflow + Postgres | ~1,5 GB |
-| MinIO, MLflow, Superset | ~1,5 GB |
+| Airflow 3 (api-server, scheduler, dag-processor) + Postgres | ~2,5 GB (scheduler chạy cả task và Spark local) |
+| MinIO, Iceberg REST, MLflow, Superset | ~2 GB |
 | GPU worker | VRAM 4 GB, RAM ~3 GB |
 
-Tổng khoảng 10–13 GB RAM khi chạy cùng lúc. Nếu máy không đủ: dùng docker-compose profile để chỉ bật dịch vụ cần cho bước đang làm, hoặc chạy demo trên VPS / máy khác.
+Tổng khoảng 10–13 GB RAM khi chạy cùng lúc. Mỗi service trong `docker-compose.yml` có `mem_limit`. Máy dev (15 GB RAM, Docker Desktop + WSL2) mặc định chỉ cấp 7,4 GB cho VM Docker → đặt `memory=8GB` + `autoMemoryReclaim=gradual` trong `%UserProfile%\.wslconfig` (giữ ~7 GB cho Windows, VS Code, trình duyệt) và chỉ bật dịch vụ cần cho bước đang làm (`make up-spark`, `make up-gpu`, `make up-serving`, `make up-crawl`). Đo thực tế: bật hết lúc rảnh ~3 GB; bộ `up-spark` ~1,4 GB rảnh, ~2,5 GB khi Spark chạy. Bước nặng nhất là ASR/embed trên GPU worker (RAM ~3 GB). Nếu vẫn thiếu: chạy demo trên VPS / máy khác.
 
 ## 7. Đánh giá hệ thống
 
@@ -211,7 +225,9 @@ Tổng khoảng 10–13 GB RAM khi chạy cùng lúc. Nếu máy không đủ: d
 | Thiếu RAM khi chạy đủ dịch vụ | Docker-compose profile; VPS cho demo |
 | Embedding lệch phiên bản encoder | Cố định tên + phiên bản encoder trong config; ghi vào `gold.features` |
 | Ngưỡng 0,75 chưa tối ưu trên dữ liệu thật | Kiểm chứng trên Đợt B; đăng ký phiên bản mới trong MLflow nếu cần |
-| Airflow mount `/var/run/docker.sock` để chạy DockerOperator: tiến trình trong Airflow có quyền gần như root trên host | Chấp nhận vì chỉ chạy local trên một máy; không mở cổng Airflow ra Internet |
+| DockerOperator cần quyền gọi Docker; ai có socket là có quyền gần như root trên host | Airflow không mount socket. Nó gọi qua `docker-proxy` (`tecnativa/docker-socket-proxy`, socket gắn read-only, chỉ mở API container / image). Chỉ chạy local, không mở cổng Airflow ra Internet |
+| Image MinIO chính thức bị gỡ (10/2025; repo GitHub đã archive) | Dùng image Chainguard dựng từ source MinIO, ghim theo digest sha256; code chỉ dùng API S3 nên đổi image không ảnh hưởng code |
+| `tabulario/iceberg-rest` in `jdbc.password` ra log khi khởi động | Chỉ chạy local; không gửi log ra ngoài; mật khẩu Postgres sinh ngẫu nhiên, riêng cho máy |
 | Một video lỗi (thiếu ảnh, slideshow hỏng) chặn cả lô | Kiểm định hai cấp (mục 9.3): chỉ cách ly dòng lỗi |
 
 ## 9. Codebase nền: kế thừa từ `hose-stock-lakehouse`
@@ -245,7 +261,7 @@ Bỏ: `dnse_sdk/`, `streaming/alerts/`, `streamlit_app/` (dùng Superset), các 
    - Bỏ mật khẩu mặc định (`admin123`) trong `config.py`: thiếu biến môi trường thì báo lỗi khi khởi tạo config (`_require_env()` trong `default_factory`).
    - Mọi tham số `config: X = X()` dùng làm default trong hàm đổi thành `config: X | None = None`; nếu không, chỉ cần import module là đã lỗi khi thiếu biến môi trường.
    - Ghim phiên bản mọi image (không dùng `latest`).
-   - Bỏ `mc anonymous set public` (HOSE mở bucket ra public); Airflow admin không mặc định `admin/admin`; `AIRFLOW__WEBSERVER__EXPOSE_CONFIG=false`.
+   - Bỏ `mc anonymous set public` (HOSE mở bucket ra public); Airflow admin không mặc định `admin/admin`; `AIRFLOW__API__EXPOSE_CONFIG=false` (Airflow 3 đổi từ `[webserver]` sang `[api]`).
 7. **Chạy trên Linux qua SSH.** Thay các script `.ps1` bằng `Makefile` (`make up PROFILE=core`, `make test`, `make dag-trigger`).
 8. **Dọn repo.** Không commit báo cáo PDF và file dữ liệu ở thư mục gốc; sửa lỗi gõ `.DS_Stor` trong `.gitignore`; `models/` và `data/` để trong `.gitignore`.
 
@@ -276,15 +292,32 @@ Chiều "Hợp lý" ứng với `Dimension.ACCURACY` trong code.
 
 ### 9.4. Engine xử lý
 
-- **Iceberg catalog:** REST (`tabulario/iceberg-rest`, JDBC trên Postgres, như HOSE), dùng chung cho PyIceberg và Spark.
+- **docker-compose** (`docker-compose.yml` ở gốc, mỗi service ghim phiên bản image, bí mật dạng `${VAR:?}` nên thiếu biến thì compose dừng ngay). Profile:
+
+  | Profile | Service |
+  |---|---|
+  | `core` | Postgres 16 (DB `airflow`, `iceberg`, `mlflow`, `superset`), MinIO (+ `minio-init`), Iceberg REST, ClickHouse 24.8 |
+  | `stream` | Kafka 3.9 KRaft (+ `kafka-init` tạo topic `tiktok.videos`: 3 partition, retention 7 ngày; tắt auto-create) |
+  | `pipeline` | Airflow 3.4: `api-server`, `scheduler`, `dag-processor` (+ `airflow-init`), `docker-proxy`; cần `core` + `stream` |
+  | `ml` | MLflow 2.22 (backend Postgres, artifact `s3://mlflow`), image `gpu-worker` |
+  | `serving` | Superset 5.0 (+ `clickhouse-connect`) |
+
+- **MinIO:** image Chainguard dựng từ source MinIO (image chính thức đã bị gỡ khỏi Docker Hub từ 10/2025), ghim digest. `minio-init` tạo bucket `raw`, `lakehouse`, `mlflow` và hai user dịch vụ, không bucket nào public:
+  - `vicap-crawler` (`infra/minio/policies/crawler.json`): đọc / ghi `raw`. Code lấy key bằng `vicap.config.crawler_minio_config()`.
+  - `vicap-pipeline` (`pipeline.json`): chỉ đọc `raw`; đọc / ghi `lakehouse`, `mlflow`. Đây là key `AWS_*` mặc định của `MinioConfig`, `IcebergConfig`, Iceberg REST, MLflow.
+  - User root chỉ dùng trong `minio` và `minio-init`.
+- **Iceberg catalog:** REST (`tabulario/iceberg-rest:1.6.0`, JDBC trên DB `iceberg` của Postgres, như HOSE), dùng chung cho PyIceberg và Spark.
 - **Spark (local mode, chạy trong container Airflow):** hai job tổng hợp là `silver_clean` và `profile`. Không dựng Spark cluster riêng để tiết kiệm RAM.
-  - HOSE không có Spark, nên image Airflow cài thêm OpenJDK 17, `pyspark` 3.5.x và hai jar `iceberg-spark-runtime-3.5_2.12`, `iceberg-aws-bundle`.
+  - HOSE không có Spark, nên image Airflow (`infra/airflow/Dockerfile`, từ `apache/airflow:3.4.0-python3.12`) cài thêm OpenJDK 17, `pyspark` 3.5.x và hai jar `iceberg-spark-runtime-3.5_2.12`, `iceberg-aws-bundle` 1.6.1 (kiểm sha1) vào `/opt/spark-jars`. Package `vicap` cài theo constraints của Airflow 3.4.0.
+  - `vicap.spark.get_spark(app_name)` dựng SparkSession `local[2]` từ `spark_conf()` (catalog REST `lakehouse`, S3FileIO, Arrow bật, driver 1 GB).
   - SparkSession bắt buộc có `spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions`; thiếu dòng này thì `MERGE INTO` báo lỗi cú pháp.
 - **PyArrow + PyIceberg** (tiến trình Python trong Airflow): ghi Bronze, nạp ClickHouse. HOSE dùng Polars; ViCAP bỏ Polars vì PyIceberg đọc / ghi Arrow sẵn, kết quả Spark đưa sang Arrow được (Spark 3.5 chưa có `DataFrame.toArrow()` public — từ 4.0 mới có — nên dùng `toPandas()` với `spark.sql.execution.arrow.pyspark.enabled=true` rồi `pa.Table.from_pandas`; mỗi lô vài trăm video nên gom về driver không đáng kể), và check embedding làm bằng NumPy trên cả cột.
 - **`gpu-worker`** (container riêng): PhoWhisper, PhoBERT, SigLIP2 và `predict` P1. Image này đã có torch và mlflow, nên image Airflow không phải cài torch.
-  - NVIDIA Container Toolkit cài trên **host**. Dockerfile chỉ cần base image CUDA và torch (cộng transformers, pyvi, mlflow, ffmpeg).
-  - Airflow gọi bằng DockerOperator với `device_requests=[DeviceRequest(count=-1, capabilities=[["gpu"]])]` và `network_mode="lakehouse_network"` (cùng network compose), để container gọi được MinIO, Iceberg REST và MLflow.
-  - Airflow mount `/var/run/docker.sock`. Đây là đánh đổi bảo mật (mục 8), chấp nhận được vì chỉ chạy local.
+  - `infra/gpu_worker/Dockerfile`: base `pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime` (driver máy dev 537.70 hỗ trợ tới CUDA 12.2) + ffmpeg + `pip install .[gpu]`; cache model HuggingFace ở volume `vicap_hf_cache`.
+  - Trên Windows, Docker Desktop (WSL2) tự đưa GPU vào container, không cần cài NVIDIA Container Toolkit; trên Linux thì phải cài Toolkit trên host.
+  - Airflow gọi bằng DockerOperator (`dags/common/gpu.py: gpu_task`) với `device_requests=[DeviceRequest(count=-1, capabilities=[["gpu"]])]` và `network_mode="lakehouse_network"` (cùng network compose), để container gọi được MinIO, Iceberg REST và MLflow. Biến S3 truyền qua `private_environment` để không hiện trên UI.
+  - Airflow **không** mount `/var/run/docker.sock`: DockerOperator gọi `tcp://docker-proxy:2375`, proxy chỉ mở API container / image và gắn socket read-only (mục 8). Cách này cũng tránh lỗi quyền vì user `airflow` (uid 50000) không đọc được socket.
+  - `nvidia-smi` / `torch.cuda` kiểm tra bằng DAG `infra_smoke` (task `gpu_check`).
 - **Dịch vụ phụ:** Postgres tạo thêm DB `mlflow` (backend store của MLflow, artifact ở bucket `mlflow`) và `superset`; image Superset cài `clickhouse-connect`.
 
 ### 9.5. Cấu trúc repo
@@ -304,20 +337,26 @@ ViCAP/
 │   ├── features/              # asr.py, embed.py (GPU), trích frame
 │   ├── model/                 # kltn_model.py, register_p1.py, predict.py
 │   ├── gold/                  # profile (Spark)
+│   ├── spark/                 # session: spark_conf / get_spark (Iceberg REST, local mode)
 │   └── pipelines/             # run_<bước>(batch_id), DAG gọi vào đây
 ├── dags/                      # chỉ định nghĩa DAG (quy ước Astronomer)
 │   ├── daily_pipeline.py
 │   ├── recrawl.py
-│   └── .airflowignore
+│   ├── infra_smoke.py         # kiểm tra Spark + Iceberg, PyIceberg + MinIO, GPU
+│   ├── common/gpu.py          # gpu_task(): DockerOperator chung cho asr / embed / predict
+│   └── .airflowignore         # bỏ qua common/
 ├── apps/                      # ứng dụng chạy được (quy ước monorepo)
 │   ├── backend/               # FastAPI: app/{main.py,routers,schemas,services}, Dockerfile, tests/
 │   └── frontend/              # Vite + React: src/{pages,components,api}, Dockerfile, package.json
 ├── infra/                     # Dockerfile + cấu hình từng service
-│   ├── airflow/Dockerfile     # JDK 17 + jar Iceberg Spark + pip install .[airflow,spark]
-│   ├── gpu_worker/Dockerfile  # CUDA + torch, pip install .[gpu]
-│   ├── clickhouse/init.sql
+│   ├── airflow/Dockerfile     # Airflow 3.4 + JDK 17 + jar Iceberg Spark + pip install .[airflow,spark]
+│   ├── gpu_worker/Dockerfile  # CUDA 12.1 + torch, pip install .[gpu]
+│   ├── postgres/init.sh       # DB airflow, iceberg, mlflow, superset
+│   ├── minio/                 # init.sh (bucket, user), policies/{crawler,pipeline}.json
+│   ├── clickhouse/            # init.sql (3 bảng phục vụ), config.d/
 │   ├── kafka/create_topics.sh
-│   └── superset/              # Dockerfile (+clickhouse-connect), export dashboard
+│   ├── mlflow/Dockerfile      # + psycopg2, boto3
+│   └── superset/              # Dockerfile (+clickhouse-connect), superset_config.py, export dashboard
 ├── configs/                   # hashtags.yaml, lịch crawl lại (dữ liệu cấu hình, không phải code)
 ├── scripts/                   # việc làm một lần: test_collect, phase0_compare, probe_cover
 ├── tests/                     # unit + integration cho src/vicap

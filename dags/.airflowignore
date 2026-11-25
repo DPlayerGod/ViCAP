@@ -1,0 +1,3 @@
+# Thư mục helper dùng chung cho DAG, không phải file DAG
+common/
+__pycache__/

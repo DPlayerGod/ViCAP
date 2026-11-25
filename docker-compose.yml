@@ -1,0 +1,366 @@
+# ViCAP — hạ tầng local (PLAN mục 2, 9.4). Bí mật lấy từ .env (xem .env.example); thiếu biến thì
+# compose báo lỗi ngay nhờ cú pháp ${VAR:?}. Không có mật khẩu mặc định, không bucket public.
+#
+# Profile:
+#   core     Postgres, MinIO (+init), Iceberg REST, ClickHouse
+#   stream   Kafka (+tạo topic)
+#   pipeline Airflow 3 (api-server, scheduler, dag-processor) + docker-socket-proxy; cần core + stream
+#   ml       MLflow + image gpu-worker (DockerOperator gọi); cần core
+#   serving  Superset; cần core
+# Ví dụ: make up PROFILE="core stream pipeline ml"
+
+# Cổng chỉ mở trên loopback 127.0.0.1 (truy cập bằng localhost, không mở ra mạng LAN).
+
+name: vicap
+
+x-pipeline-s3-env: &pipeline-s3-env
+  # key vicap-pipeline: đọc raw/, ghi lakehouse/ + mlflow/ (infra/minio/policies/pipeline.json)
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?}
+  AWS_REGION: ${AWS_REGION:-us-east-1}
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: infra/airflow/Dockerfile
+  image: vicap/airflow:dev
+  restart: unless-stopped
+  environment: &airflow-env
+    <<: *pipeline-s3-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Ho_Chi_Minh
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?}
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
+    AIRFLOW__API__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?}
+    AIRFLOW__API__EXPOSE_CONFIG: "false"
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/airflow
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    PYTHONPATH: /opt/airflow/src
+    # địa chỉ bên trong network compose (đè giá trị localhost của .env)
+    MINIO_ENDPOINT: http://minio:9000
+    MINIO_CRAWLER_ACCESS_KEY: ${MINIO_CRAWLER_ACCESS_KEY:?}
+    MINIO_CRAWLER_SECRET_KEY: ${MINIO_CRAWLER_SECRET_KEY:?}
+    CATALOG_URI_CLIENT: http://iceberg-rest:8181
+    CATALOG_WAREHOUSE: s3://lakehouse/warehouse/
+    CLICKHOUSE_HOST: clickhouse
+    CLICKHOUSE_PORT: "8123"
+    CLICKHOUSE_USER: ${CLICKHOUSE_USER:?}
+    CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?}
+    CLICKHOUSE_DB: vicap
+    KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    KAFKA_TOPIC_VIDEOS: ${KAFKA_TOPIC_VIDEOS:-tiktok.videos}
+    MLFLOW_TRACKING_URI: http://mlflow:5000
+    # DockerOperator (dags/common/gpu.py) gọi Docker qua proxy, không mount socket vào Airflow
+    DOCKER_HOST_URL: tcp://docker-proxy:2375
+    GPU_WORKER_IMAGE: vicap/gpu-worker:dev
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./src:/opt/airflow/src
+    - ./configs:/opt/airflow/configs
+    - airflow_logs:/opt/airflow/logs
+  networks: [lakehouse]
+
+services:
+  # ─────────────────────────────── core ───────────────────────────────
+  postgres:
+    image: postgres:16.16-alpine
+    profiles: ["core"]
+    restart: unless-stopped
+    mem_limit: 384m
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: postgres
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sh:/docker-entrypoint-initdb.d/10-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d iceberg"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [lakehouse]
+
+  minio:
+    # Image MinIO chính thức đã bị gỡ khỏi Docker Hub (10/2025) → bản Chainguard dựng từ source, ghim digest.
+    image: cgr.dev/chainguard/minio@sha256:f6243be11aaaa2fe654d260558e2b3fcef50135e78a3abfd0db802b13444f059
+    profiles: ["core"]
+    restart: unless-stopped
+    mem_limit: 768m
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+    ports:
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes: [minio_data:/data]
+    # image distroless (không có shell / curl) → không healthcheck; minio-init đợi bằng `mc ready`
+    networks: [lakehouse]
+
+  minio-init:
+    image: cgr.dev/chainguard/minio-client:latest-dev@sha256:8012c68d3ead3a936ca683e2288ddbe7a854af75fb1fe752a817bb84855039dd
+    profiles: ["core"]
+    depends_on: [minio]
+    entrypoint: ["/bin/sh", "/init.sh"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+      MINIO_CRAWLER_ACCESS_KEY: ${MINIO_CRAWLER_ACCESS_KEY:?}
+      MINIO_CRAWLER_SECRET_KEY: ${MINIO_CRAWLER_SECRET_KEY:?}
+      MINIO_PIPELINE_ACCESS_KEY: ${AWS_ACCESS_KEY_ID:?}
+      MINIO_PIPELINE_SECRET_KEY: ${AWS_SECRET_ACCESS_KEY:?}
+      MC_CONFIG_DIR: /tmp/mc
+    volumes:
+      - ./infra/minio/init.sh:/init.sh:ro
+      - ./infra/minio/policies:/policies:ro
+    networks: [lakehouse]
+
+  iceberg-rest:
+    image: tabulario/iceberg-rest:1.6.0
+    profiles: ["core"]
+    restart: unless-stopped
+    mem_limit: 512m
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    environment:
+      <<: *pipeline-s3-env
+      CATALOG_WAREHOUSE: s3://lakehouse/warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      CATALOG_CATALOG__IMPL: org.apache.iceberg.jdbc.JdbcCatalog
+      CATALOG_URI: jdbc:postgresql://postgres:5432/iceberg
+      CATALOG_JDBC_USER: ${POSTGRES_USER:?}
+      CATALOG_JDBC_PASSWORD: ${POSTGRES_PASSWORD:?}
+    ports: ["127.0.0.1:${CATALOG_PORT:-8181}:8181"]
+    networks: [lakehouse]
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    profiles: ["core"]
+    restart: unless-stopped
+    mem_limit: 1536m
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:?}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?}
+      CLICKHOUSE_DB: vicap
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "0"
+    ports:
+      - "127.0.0.1:${CLICKHOUSE_PORT:-8123}:8123"
+      - "127.0.0.1:${CLICKHOUSE_NATIVE_PORT:-9002}:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./infra/clickhouse/config.d:/etc/clickhouse-server/config.d:ro
+      - ./infra/clickhouse/init.sql:/docker-entrypoint-initdb.d/10-serving.sql:ro
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [lakehouse]
+
+  # ─────────────────────────────── stream ─────────────────────────────
+  kafka:
+    image: apache/kafka:3.9.1
+    profiles: ["stream"]
+    restart: unless-stopped
+    mem_limit: 768m
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,HOST://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,HOST://localhost:${KAFKA_HOST_PORT:-29092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xmx512m -Xms256m
+    ports: ["127.0.0.1:${KAFKA_HOST_PORT:-29092}:29092"]
+    volumes: [kafka_data:/var/lib/kafka/data]
+    networks: [lakehouse]
+
+  kafka-init:
+    image: apache/kafka:3.9.1
+    profiles: ["stream"]
+    depends_on: [kafka]
+    entrypoint: ["/bin/sh", "/create_topics.sh"]
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      KAFKA_TOPIC_VIDEOS: ${KAFKA_TOPIC_VIDEOS:-tiktok.videos}
+    volumes: [./infra/kafka/create_topics.sh:/create_topics.sh:ro]
+    networks: [lakehouse]
+
+  # ────────────────────────────── pipeline ────────────────────────────
+  docker-proxy:
+    # Airflow (DockerOperator) gọi Docker qua proxy này thay vì mount socket trực tiếp:
+    # chỉ mở API container / image, socket gắn read-only (PLAN mục 8, 9.4).
+    image: tecnativa/docker-socket-proxy:3.4
+    profiles: ["pipeline"]
+    restart: unless-stopped
+    mem_limit: 64m
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      INFO: 1
+      POST: 1
+    volumes: [/var/run/docker.sock:/var/run/docker.sock:ro]
+    networks: [lakehouse]
+
+  airflow-init:
+    <<: *airflow-common
+    profiles: ["pipeline"]
+    restart: "no"
+    depends_on:
+      postgres: {condition: service_healthy}
+    command: version
+    environment:
+      <<: *airflow-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?}
+
+  airflow-api-server:
+    <<: *airflow-common
+    profiles: ["pipeline"]
+    mem_limit: 1g
+    command: api-server
+    ports: ["127.0.0.1:${AIRFLOW_PORT:-8080}:8080"]
+    depends_on:
+      airflow-init: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  airflow-scheduler:
+    # LocalExecutor: task (kể cả Spark local) chạy trong container này → cấp nhiều RAM nhất
+    <<: *airflow-common
+    profiles: ["pipeline"]
+    mem_limit: 3g
+    command: scheduler
+    depends_on:
+      airflow-init: {condition: service_completed_successfully}
+      iceberg-rest: {condition: service_started}
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    profiles: ["pipeline"]
+    mem_limit: 768m
+    command: dag-processor
+    depends_on:
+      airflow-init: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 20s
+      retries: 5
+      start_period: 60s
+
+  # ──────────────────────────────── ml ────────────────────────────────
+  mlflow:
+    build:
+      context: .
+      dockerfile: infra/mlflow/Dockerfile
+    image: vicap/mlflow:dev
+    profiles: ["ml"]
+    restart: unless-stopped
+    mem_limit: 1g
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    environment:
+      <<: *pipeline-s3-env
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri postgresql://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/mlflow
+      --artifacts-destination s3://mlflow/
+      --serve-artifacts
+    ports: ["127.0.0.1:${MLFLOW_PORT:-5000}:5000"]
+    networks: [lakehouse]
+
+  gpu-worker:
+    # Chủ yếu để build image vicap/gpu-worker:dev; `up` chỉ chạy một lần kiểm tra GPU rồi thoát.
+    # Task thật do Airflow tạo bằng DockerOperator (dags/common/gpu.py).
+    build:
+      context: .
+      dockerfile: infra/gpu_worker/Dockerfile
+    image: vicap/gpu-worker:dev
+    profiles: ["ml"]
+    restart: "no"
+    command: ["python", "-c", "import torch; assert torch.cuda.is_available(), 'không thấy GPU'; print('GPU:', torch.cuda.get_device_name(0))"]
+    volumes: [hf_cache:/models/hf]
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+    networks: [lakehouse]
+
+  # ────────────────────────────── serving ─────────────────────────────
+  superset-init:
+    build:
+      context: .
+      dockerfile: infra/superset/Dockerfile
+    image: vicap/superset:dev
+    profiles: ["serving"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment: &superset-env
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?}
+      SUPERSET_DATABASE_URI: postgresql+psycopg2://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/superset
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:?}
+    command: >
+      sh -c "superset db upgrade &&
+      (superset fab create-admin --username admin --firstname ViCAP --lastname Admin
+      --email admin@localhost --password \"$$SUPERSET_ADMIN_PASSWORD\" || true) &&
+      superset init"
+    networks: [lakehouse]
+
+  superset:
+    image: vicap/superset:dev
+    profiles: ["serving"]
+    restart: unless-stopped
+    mem_limit: 1g
+    depends_on:
+      superset-init: {condition: service_completed_successfully}
+      clickhouse: {condition: service_healthy}
+    environment: *superset-env
+    ports: ["127.0.0.1:${SUPERSET_PORT:-8088}:8088"]
+    networks: [lakehouse]
+
+volumes:
+  postgres_data:
+  minio_data:
+  clickhouse_data:
+  kafka_data:
+  airflow_logs:
+  hf_cache:
+    name: vicap_hf_cache  # tên cố định để DockerOperator mount được
+
+networks:
+  lakehouse:
+    name: lakehouse_network

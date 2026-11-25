@@ -72,6 +72,7 @@ def test_keys_use_video_id_only() -> None:
     assert nm.frame_name(vid, 0) == f"{vid}_0.jpg"
     assert nm.audio_name(vid) == f"{vid}.mp3"
     assert nm.raw_video(vid, nm.VIDEO_FILE) == f"videos/{vid}/video.mp4"
+    assert nm.raw_video(vid, nm.INFO_FILE) == f"videos/{vid}/info.json"
     assert nm.raw_video(vid, nm.cover_name("jpeg")) == f"videos/{vid}/cover.jpg"
     assert nm.raw_video(vid, nm.slide_name(2, "png")) == f"videos/{vid}/img_002.png"
     assert nm.raw_prefix(vid) == f"videos/{vid}/"

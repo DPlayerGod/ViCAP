@@ -49,6 +49,17 @@ class MinioConfig:
     raw_bucket: str = "raw"  # lớp 0: videos/{video_id}/…, chỉ crawler ghi (PLAN mục 4.2)
 
 
+def crawler_minio_config() -> MinioConfig:
+    """Key của user MinIO ``vicap-crawler``: chỉ user này ghi được bucket ``raw`` (PLAN mục 4.2).
+
+    ``MinioConfig()`` mặc định dùng ``AWS_*`` = user ``vicap-pipeline`` (đọc ``raw``, ghi ``lakehouse``).
+    """
+    return MinioConfig(
+        access_key=_require_env("MINIO_CRAWLER_ACCESS_KEY"),
+        secret_key=_require_env("MINIO_CRAWLER_SECRET_KEY"),
+    )
+
+
 @dataclass(frozen=True)
 class IcebergConfig:
     catalog_name: str = "lakehouse"
@@ -72,7 +83,7 @@ class ClickHouseConfig:
 
 @dataclass(frozen=True)
 class KafkaConfig:
-    bootstrap_servers: str = _optional("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    bootstrap_servers: str = _optional("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092")
     topic: str = _optional("KAFKA_TOPIC_VIDEOS", "tiktok.videos")
     group_id: str = "bronze-writer"  # PLAN mục 5: tắt auto commit, commit sau khi ghi Iceberg
 
