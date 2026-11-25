@@ -1,5 +1,5 @@
 .PHONY: up up-all down build ps stats logs test test-integration lint dag-trigger \
-        up-crawl up-spark up-gpu up-serving crawl bronze
+        up-crawl up-spark up-gpu up-serving crawl bronze silver test-spark
 
 PROFILE ?= core
 DAG ?= daily_pipeline
@@ -78,6 +78,18 @@ crawl:
 # Kafka → bronze.videos_raw từ máy host (cần make up PROFILE="core stream")
 bronze:
 	uv run python -m vicap.pipelines.bronze
+
+# Spark chạy trong airflow-scheduler (cần make up-spark): make silver | make silver BATCH=20261125-143314
+silver:
+	docker compose exec airflow-scheduler python -m vicap.pipelines.silver $(if $(BATCH),--batch-id $(BATCH))
+
+# Test Spark (marker spark) trong airflow-scheduler: chép đè tests/ vào /tmp/vicap-test, cài pytest vào venv của image
+# (mất khi tạo lại container)
+test-spark:
+	docker compose exec -T airflow-scheduler mkdir -p /tmp/vicap-test
+	docker compose cp tests airflow-scheduler:/tmp/vicap-test/
+	docker compose cp pyproject.toml airflow-scheduler:/tmp/vicap-test/pyproject.toml
+	docker compose exec -T airflow-scheduler sh -c "cd /tmp/vicap-test && python -m pip install -q pytest && python -m pytest -m spark"
 
 dag-trigger:
 	docker compose exec airflow-scheduler airflow dags trigger $(DAG)

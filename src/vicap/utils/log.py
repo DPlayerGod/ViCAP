@@ -21,8 +21,8 @@ FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <7}</level> | "
     "<cyan>{name}</cyan> - <level>{message}</level>"
 )
-# kafka-python log mỗi lần kết nối / đổi metadata ở mức INFO
-QUIET: Mapping[str, str] = {"kafka": "WARNING"}
+# kafka-python log mỗi lần kết nối / đổi metadata ở mức INFO; py4j (pyspark) log mỗi lệnh gửi JVM
+QUIET: Mapping[str, str] = {"kafka": "WARNING", "py4j": "WARNING"}
 
 
 class InterceptHandler(logging.Handler):

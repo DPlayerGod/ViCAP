@@ -114,22 +114,27 @@ BRONZE_CREATORS_RAW_SCHEMA = _schema(
     ("batch_id", StringType(), True),
 )
 
+# Một dòng / video: bản crawl mới nhất trong Bronze (khoá video_id). caption / hashtags theo vicap.silver.text.
 SILVER_VIDEOS_SCHEMA = _schema(
     ("video_id", StringType(), True),
     ("username", StringType(), True),
     ("posted_at", TimestamptzType(), False),
     ("duration", IntegerType(), False),
     ("media_type", StringType(), True),
-    ("caption", StringType(), False),  # đã bỏ #hashtag
-    ("hashtags", STRING_LIST, False),
+    ("caption", StringType(), False),  # đã bỏ #hashtag, như cột caption của v5
+    ("hashtags", STRING_LIST, False),  # #(\w+) theo thứ tự, giữ trùng, như cột hashtag của v5
     ("play_count", LongType(), False),
     ("like_count", LongType(), False),
     ("comment_count", LongType(), False),
     ("share_count", LongType(), False),
+    ("save_count", LongType(), False),
+    ("follower_count", LongType(), False),
     ("media_key", StringType(), False),
     ("thumbnail_key", StringType(), False),
+    ("image_keys", STRING_LIST, False),  # slideshow: ảnh cho features/frames
     ("crawl_ts", TimestamptzType(), True),
-    ("batch_id", StringType(), True),
+    ("batch_id", StringType(), True),  # lô Bronze của bản crawl này
+    ("updated_at", TimestamptzType(), True),
 )
 
 SILVER_TRANSCRIPTS_SCHEMA = _schema(

@@ -74,7 +74,7 @@ Trả lời câu hỏi: **yt-dlp có thay được Apify không?**
 |---|---|
 | `bronze.videos_raw` | Mỗi dòng một message `ok` của `tiktok.videos`, khoá `(batch_id, video_id)`: `video_id`, `username`, `crawl_ts`, `batch_id`, `media_type` (video / slideshow, mục 4.1), caption, hashtag, lượt xem / thích / follower, key `info.json` / mp4 / ảnh bìa / ảnh slideshow trên MinIO (theo `video_id`, mục 4.2), `raw_json` (itemStruct gốc), partition / offset Kafka |
 | `bronze.creators_raw` | `username`, follower, nguồn phát hiện (hashtag nào), thời điểm phát hiện |
-| `silver.videos` | Video đã làm sạch, khử trùng; `media_type` (video / slideshow), caption + hashtag đã chuẩn hoá |
+| `silver.videos` | Một dòng / `video_id` (bản crawl mới nhất), `media_type` (video / slideshow), `caption` + `hashtags` dựng như cột `caption` / `hashtag` của v5 (mục 5), lượt xem / thích / follower, key mp4 / ảnh bìa / ảnh slideshow |
 | `silver.transcripts` | Transcript PhoWhisper (`transcript_raw`), cờ có / không có transcript |
 | `gold.features` | `text_emb` float32 2×768, `image_emb` float32 8×768 (mục 4.1), tên + phiên bản encoder |
 | `gold.video_predictions` | 20 xác suất, `labels` (mục 4.3), ngưỡng, `model_run_id`, `batch_id` |
@@ -196,6 +196,10 @@ discover ──> crawl ──> bronze ──> silver_clean ──> asr ──> e
   - Khử trùng theo `(batch_id, video_id)` giữ `crawl_ts` mới nhất, gộp với dòng đã có của cùng `batch_id`, ghi đè theo `batch_id` trong một commit.
   - Ghi Iceberg xong mới commit offset (đúng mốc). Lỗi giữa chừng thì không commit; lần chạy lại đọc lại từ offset cũ.
   - `ops.quarantine` gộp theo `(stage, batch_id)` thay vì ghi đè (một lần chạy có thể chỉ thấy một phần lô); video lần này đã vào Bronze thì bỏ khỏi quarantine của lô đó.
+- **`silver_clean`** (Spark, `vicap.pipelines.silver`): đọc Bronze của các lô được chọn, giữ bản `crawl_ts` mới nhất mỗi video, kiểm định bằng PyArrow (`silver_videos_suite`), rồi `MERGE INTO silver.videos` với `WHEN MATCHED AND s.crawl_ts > t.crawl_ts`. Không có gì đổi thì không commit.
+  - Text phải giống v5 vì model học trên `caption + " " + " ".join(hashtag)`: `hashtags` = mọi `#(\w+)` trong `desc` theo thứ tự, giữ trùng; `caption` = thay mỗi `#\w+` bằng dấu cách, gộp dấu cách / tab, `strip`, giữ xuống dòng. Đã so 186 video Giai đoạn 0: hashtag khớp tuyệt đối 186/186, caption khớp 186/186 sau khi chuẩn hoá khoảng trắng (yt-dlp đã đổi `\n` thành dấu cách).
+  - Dùng UDF Python (`re`) thay cho `regexp_replace`: `\w` của Java chỉ là ASCII (`#Cá` chỉ bắt `C`).
+  - Catalog Spark tắt `cache-enabled` (PyIceberg và Spark cùng ghi bảng) và `check-nullability` (cột từ UDF luôn nullable; null đã bị `NotNull` chặn).
 - GPU worker (container `gpu-worker`, mục 9.4) nạp **lần lượt** PhoWhisper → PhoBERT → SigLIP2, giải phóng bộ nhớ sau mỗi bước.
 - `predict` nạp `models:/kltn-p1@champion`, gán nhãn theo mục 4.3; đổi mô hình chỉ cần chuyển alias trong MLflow.
 - Mỗi bước kiểm định theo mục 9.3: dòng lỗi bị cách ly, phần còn lại chạy tiếp; lỗi cấp lô thì dừng.

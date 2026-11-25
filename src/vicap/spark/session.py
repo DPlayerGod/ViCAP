@@ -46,6 +46,8 @@ def spark_conf(
         f"{cat}.s3.access-key-id": config.access_key,
         f"{cat}.s3.secret-access-key": config.secret_key,
         f"{cat}.client.region": config.region,
+        # PyIceberg (Bronze, Gold) và Spark cùng ghi các bảng: không cache metadata, luôn đọc snapshot mới nhất
+        f"{cat}.cache-enabled": "false",
         "spark.sql.defaultCatalog": config.catalog_name,
         # Spark 3.5 chưa có DataFrame.toArrow() public → toPandas() qua Arrow rồi pa.Table.from_pandas
         "spark.sql.execution.arrow.pyspark.enabled": "true",
@@ -53,6 +55,10 @@ def spark_conf(
         "spark.driver.memory": driver_memory,
         "spark.sql.shuffle.partitions": "4",  # mỗi lô vài trăm video
         "spark.ui.enabled": "false",
+        "spark.ui.showConsoleProgress": "false",  # thanh tiến trình làm rối log Airflow
+        # Bảng tạo bằng PyIceberg có cột required; cột Spark dựng từ UDF / window luôn nullable nên MERGE bị từ
+        # chối dù không có null. Null thật đã bị suite kiểm định (NotNull) chặn trước khi ghi.
+        "spark.sql.iceberg.check-nullability": "false",
     }
     jars = _jars(jars_dir)
     if jars:
@@ -72,4 +78,6 @@ def get_spark(
     builder = SparkSession.builder.appName(app_name).master(master)
     for key, value in spark_conf(config, **kwargs).items():
         builder = builder.config(key, value)
-    return builder.getOrCreate()
+    spark = builder.getOrCreate()
+    spark.sparkContext.setLogLevel("WARN")
+    return spark
