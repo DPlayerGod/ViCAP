@@ -99,6 +99,15 @@ class MlflowConfig:
         return f"models:/{self.model_name}@{self.model_alias}"
 
 
+# Thứ tự nhãn của checkpoint P1 (``final_model.pt``: ``ck["labels"]``); ``probs`` trong gold theo đúng thứ tự này.
+P1_LABELS: tuple[str, ...] = (
+    "Beauty_Review", "Beauty_Tutorial", "Commerce", "Entertainment_Comedy", "Entertainment_Dance",
+    "Entertainment_Game", "Entertainment_Sing", "Fashion_Lookbook", "Fashion_Review", "Fitness_Wellness",
+    "Fitness_Workout", "Food_Cooking", "Food_Review", "Knowledge_General", "Knowledge_Study", "Lifestyle_Travel",
+    "Lifestyle_Vlog", "Others", "Sports", "Tech",
+)
+
+
 @dataclass(frozen=True)
 class ModelConfig:
     """Luật gán nhãn và encoder (PLAN mục 4.1, 4.3). Đổi encoder thì phải tính lại `gold.features`."""
@@ -106,6 +115,8 @@ class ModelConfig:
     threshold: float = 0.75
     at_least_one: bool = True  # decide(P, th, at_least_one=True); không dùng decide_rule
     n_labels: int = 20
+    labels: tuple[str, ...] = P1_LABELS
+    profile_exclude: tuple[str, ...] = ("Others",)  # ck["profile_exclude"]
     text_dim: int = 768
     image_dim: int = 768
     n_text: int = 2  # [0] caption + hashtag, [1] transcript_raw
@@ -115,6 +126,11 @@ class ModelConfig:
     # TODO: đối chiếu đúng checkpoint PhoBERT với notebook v12 trước khi tính embedding mới.
     text_encoder: str = _optional("TEXT_ENCODER", "vinai/phobert-base")
     image_encoder: str = _optional("IMAGE_ENCODER", "google/siglip2-base-patch16-224")
+
+    @property
+    def profile_labels(self) -> tuple[str, ...]:
+        """19 nhãn của hồ sơ creator (bỏ Others), giữ thứ tự checkpoint: thứ tự của ``label_ratios``."""
+        return tuple(lb for lb in self.labels if lb not in self.profile_exclude)
 
 
 @dataclass(frozen=True)

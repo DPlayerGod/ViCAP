@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from vicap.config import MlflowConfig
+from vicap.config import MlflowConfig, ModelConfig
 
 TEXT_SLOTS, IMAGE_SLOTS, DIM = 2, 8, 768
 
@@ -64,7 +64,10 @@ def load_p1(config: MlflowConfig | None = None) -> P1:
     mlflow.set_tracking_uri(config.tracking_uri)
     mv = MlflowClient().get_model_version_by_alias(config.model_name, config.model_alias)
     model = mlflow.pyfunc.load_model(f"models:/{config.model_name}/{mv.version}")
-    return P1(model.unwrap_python_model().predictor, config.model_name, str(mv.version), mv.run_id)
+    predictor = model.unwrap_python_model().predictor
+    if tuple(predictor.labels) != ModelConfig().labels:  # profile đọc probs theo thứ tự ModelConfig.labels
+        raise ValueError(f"{config.model_name} v{mv.version}: nhãn khác ModelConfig.labels: {predictor.labels}")
+    return P1(predictor, config.model_name, str(mv.version), mv.run_id)
 
 
 def predict_batch(p1: P1, text_emb: np.ndarray, image_emb: np.ndarray) -> tuple[np.ndarray, list[list[str]]]:

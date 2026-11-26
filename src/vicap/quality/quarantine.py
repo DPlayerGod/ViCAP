@@ -119,6 +119,7 @@ def merge_quarantine_rows(
 
     Dùng khi một lần chạy chỉ thấy một phần của lô (Bronze đọc Kafka theo offset: retry của crawl tới ở lần
     chạy sau). Dòng mới thay dòng cũ cùng ``video_id``; video trong ``resolved`` (lần này đã xử lý được) bị bỏ.
+    Dòng không gắn video (``video_id`` null, vd hồ sơ creator) khoá theo ``(username, lỗi)``, ``resolved`` là username.
     Không có gì đổi thì không ghi. Trả về số dòng của ``(stage, batch_id)`` sau khi gộp.
     """
     resolved = set(resolved)
@@ -129,11 +130,14 @@ def merge_quarantine_rows(
     new_rows = bad.select(BAD_SCHEMA.names).cast(BAD_SCHEMA).to_pylist()
 
     def key(r: dict) -> object:
-        return r["video_id"] if r["video_id"] is not None else tuple(r["_errors"])
+        return r["video_id"] if r["video_id"] is not None else (r["username"], tuple(r["_errors"]))
+
+    def done(r: dict) -> bool:  # dòng không gắn video (hồ sơ creator): resolved chứa username
+        return (r["video_id"] if r["video_id"] is not None else r["username"]) in resolved
 
     merged = {key(r): r for r in old_rows}
     merged.update({key(r): r for r in new_rows})
-    rows = [r for r in merged.values() if r["video_id"] not in resolved]
+    rows = [r for r in merged.values() if not done(r)]
     if not new_rows and len(rows) == len(old_rows):
         return len(rows)
     return write_quarantine_rows(

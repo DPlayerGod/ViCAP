@@ -1,5 +1,5 @@
 .PHONY: up up-all down build ps stats logs test test-integration lint dag-trigger \
-        up-crawl up-spark up-gpu up-serving crawl bronze silver media asr embed register predict test-spark
+        up-crawl up-spark up-gpu up-serving crawl bronze silver media asr embed register predict profile test-spark
 
 PROFILE ?= core
 DAG ?= daily_pipeline
@@ -82,6 +82,10 @@ bronze:
 # Spark chạy trong airflow-scheduler (cần make up-spark): make silver | make silver BATCH=20261125-143314
 silver:
 	docker compose exec airflow-scheduler python -m vicap.pipelines.silver $(if $(BATCH),--batch-id $(BATCH))
+
+# gold.video_predictions → gold.creator_profiles + creator_profile_history (Spark, cần make up-spark)
+profile:
+	docker compose exec airflow-scheduler python -m vicap.pipelines.profile $(if $(BATCH),--batch-id $(BATCH))
 
 # 8 ảnh + audio → lakehouse/derived/ + silver.media, chạy trên máy host (uv sync --extra media)
 media:

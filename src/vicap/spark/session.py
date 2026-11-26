@@ -80,4 +80,7 @@ def get_spark(
         builder = builder.config(key, value)
     spark = builder.getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
+    # cache-enabled=false → mỗi lần load bảng tạo một S3FileIO, GC thu hồi kèm WARN "Unclosed S3FileIO" và stack trace
+    log4j = spark.sparkContext._jvm.org.apache.log4j
+    log4j.LogManager.getLogger("org.apache.iceberg.aws.s3.S3FileIO").setLevel(log4j.Level.ERROR)
     return spark

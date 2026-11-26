@@ -77,3 +77,15 @@ def test_split_valid_output_fits(sql_catalog) -> None:
     table = ensure_table(sql_catalog, OPS_QUARANTINE.identifier, OPS_QUARANTINE.schema, OPS_QUARANTINE.partition_spec)
     assert write_quarantine_rows(table, res.bad, stage="bronze_videos", batch_id="b", processing_date=TS) == 1
     assert read_table(table).column("raw_ref").to_pylist() == ["s3://raw/videos/2/"]
+
+
+def test_profile_rows_keyed_by_username(sql_catalog) -> None:
+    from vicap.quality.quarantine import quarantine_by_batch
+
+    table = ensure_table(sql_catalog, OPS_QUARANTINE.identifier, OPS_QUARANTINE.schema, OPS_QUARANTINE.partition_spec)
+    err = "vector_range:label_ratios"
+    kw = {"stage": "gold_creator_profiles", "processing_date": "2026-11-25"}
+    quarantine_by_batch(table, [("b1", None, "a", err), ("b1", None, "b", err)], **kw)  # cùng lỗi, khác creator
+    assert sorted(read_table(table).column("username").to_pylist()) == ["a", "b"]
+    quarantine_by_batch(table, [], resolved={"b1": {"a"}}, **kw)  # a lần này qua được
+    assert read_table(table).column("username").to_pylist() == ["b"]
