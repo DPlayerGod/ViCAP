@@ -76,9 +76,9 @@
 - [x] Chép `kltn_model.py` vào `src/vicap/model/`, **giữ nguyên tên module** `kltn_model` (ruff bỏ qua file này); chỉ để `final_model.pt` trong `models/`
 - [x] `vicap.model.predict.build_p1_inputs`: `text_emb` → 1.536 theo thứ tự `[caption+hashtag ; ASR]`, `image_emb` → trung bình các ảnh có thật (chia cho số ảnh có, không chia 8) + test
 - [x] Kiểm tra `build_p1_inputs` trên cache Kaggle (`data/kaggle/mainnotebook/`, tải bằng `uvx --with six kaggle kernels output cngngquc/mainnotebook --file-pattern …`): 2.107 video, cosine với `V_frames` nhỏ nhất 0,9999998; `T_capasr` khớp tuyệt đối. Model cuối dùng `text_caphash_290eedc8` + `text_asr_chunked_PhoWhisper_medium_6ba74b77` (bản 2.107 video; hash khác là dataset cũ)
-- [ ] Chạy `register_p1.py` (log với `code_paths=[.../kltn_model.py]`) → `kltn-p1` phiên bản 1, alias `@champion`, ngưỡng 0,75
-- [ ] `vicap.model.predict.predict_batch`: gán nhãn theo `decide(..., at_least_one=True)` (PLAN mục 4.3)
-- [ ] Kiểm tra `predict_batch` trên 100 video Gold khớp xác suất và nhãn của notebook
+- [x] `vicap.model.register_p1` / `make register`: pyfunc "models from code" (`mlflow_p1.py`) + `code_paths=[kltn_model.py]` + artifact `checkpoint`, param của checkpoint, tag SHA-256 → `kltn-p1` v1 (run `ede04e01…`), alias `@champion`; chạy lại không đăng ký trùng
+- [x] `vicap.model.predict.load_p1` (alias → phiên bản → `run_id`) + `predict_batch` (`decide` của checkpoint: ≥ 0,75, luôn ≥ 1 nhãn)
+- [x] Model nạp từ `models:/kltn-p1@champion` vs nạp thẳng `final_model.pt` trên 2.107 video cache Kaggle: |Δxác suất| = 0, nhãn giống 2.107/2.107 (2.039 video 1 nhãn, 68 video 2 nhãn)
 
 ### Pipeline
 - [x] `ingestion/`: crawler yt-dlp (theo kết quả Giai đoạn 0) → mp4 / ảnh slideshow + ảnh bìa + `info.json` (`itemStruct`) lên `raw/videos/{video_id}/` trước, rồi gửi message vào topic `tiktok.videos` (key `video_id`, metadata chính + key MinIO, PLAN mục 4.2); `vicap.pipelines.crawl.run_crawl` / `make crawl`; chạy thật 2 video + 1 slideshow (8 ảnh), message 0,7–1,1 KB, crawl lại không tải lại mp4
@@ -93,7 +93,7 @@
 - [x] `features/text.py`: port PhoBERT của notebook (`word_segment`, `encode_texts`, `encode_chunked`); cosine với cache `T_cap` / `T_asr` = 1,0000 trên 60 video
 - [x] `features/image.py`: port SigLIP2 của notebook (`siglip_encode`, `get_image_features` → `pooler_output`, fp32); 8 ảnh dựng lại từ mp4 + ảnh bìa Giai đoạn 0 (181 video, 1.448 ảnh): cosine từng ảnh với `V_frames_seq` min 0,9997 / mean 1,0000, P1 tập nhãn giống 181/181 (|Δxác suất| max 0,002)
 - [x] `pipelines/embed.py`: PhoBERT → SigLIP2 (giải phóng VRAM giữa hai model) → `gold.features` (`replace_by_keys`, `gold_features_suite`, lỗi → `ops.quarantine`) — `make embed`; chạy thật 6 video, chạy lại bỏ qua 6; thử P1 trên 6 video: blv Anh Quân → Sports, Radio Việt Nam → Entertainment_Sing (xác suất 0,97–1,00)
-- [ ] `model/predict.py` trong DAG → `gold.video_predictions` (ghi bằng `replace_by_keys`)
+- [x] `pipelines/predict.py` → `gold.video_predictions` (`replace_by_keys`, `gold_predictions_suite`, ghi `model_name` / `model_version` / `model_run_id` / ngưỡng; bỏ qua video đã có dự đoán của cùng phiên bản, đổi alias thì dự đoán lại) — `make predict`; chạy thật 6 video: hoanganhquan_blv → Sports, radiovietnam.sound → Entertainment_Sing
 - [ ] `gold/profile.py` (Spark) → `gold.creator_profiles`, `gold.creator_profile_history`
 - [ ] Nạp 3 bảng gold sang ClickHouse
 - [ ] `dags/daily_pipeline.py` nối đủ các task (mỗi task gọi một `vicap.pipelines.run_<bước>(batch_id)`); `asr`, `embed`, `predict` chạy bằng DockerOperator; `quality_check` ở cuối

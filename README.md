@@ -87,6 +87,8 @@ make media       # silver.videos → 8 ảnh + mp3 ở lakehouse/derived/ + silv
 make up-gpu      # giữ lõi + Airflow + docker-proxy + MLflow, tắt phần còn lại
 make asr         # PhoWhisper trong gpu-worker → silver.transcripts (lần đầu tải model ~3 GB)
 make embed       # PhoBERT + SigLIP2 trong gpu-worker → gold.features
+make register    # một lần: models/final_model.pt → MLflow kltn-p1, alias @champion
+make predict     # models:/kltn-p1@champion → gold.video_predictions
 ```
 
 Cắt ảnh / tách audio là port nguyên script dựng dataset lúc train (`scripts/reference/`); ASR, PhoBERT, SigLIP2 giống notebook (đã so với cache `.npz` của Kaggle, xem TODO).

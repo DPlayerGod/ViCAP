@@ -206,6 +206,8 @@ discover ──> crawl ──> bronze ──> silver_clean ──> asr ──> e
   - Catalog Spark tắt `cache-enabled` (PyIceberg và Spark cùng ghi bảng) và `check-nullability` (cột từ UDF luôn nullable; null đã bị `NotNull` chặn).
 - GPU worker (container `gpu-worker`, mục 9.4) nạp **lần lượt** PhoWhisper → PhoBERT → SigLIP2, giải phóng bộ nhớ sau mỗi bước.
 - `predict` nạp `models:/kltn-p1@champion`, gán nhãn theo mục 4.3; đổi mô hình chỉ cần chuyển alias trong MLflow.
+  - Đăng ký (`vicap.model.register_p1`): pyfunc kiểu "models from code" (`model/mlflow_p1.py`) + `code_paths=[kltn_model.py]` + artifact `checkpoint` (`final_model.pt`); run ghi param của checkpoint, nhãn, tag SHA-256 (checkpoint đã có thì chỉ gán alias). Load lại chỉ cần mlflow + torch + numpy.
+  - `load_p1` đọc alias ra phiên bản rồi nạp đúng phiên bản đó, để ghi `model_version` / `model_run_id` khớp với model đã chạy. Video đã có dự đoán của cùng phiên bản thì bỏ qua; đổi alias thì dự đoán lại.
 - Mỗi bước kiểm định theo mục 9.3: dòng lỗi bị cách ly, phần còn lại chạy tiếp; lỗi cấp lô thì dừng.
 - `quality_check`: số video mỗi lô, tỉ lệ thiếu transcript / embedding, số dòng bị cách ly, phân bố nhãn so với lô trước.
 

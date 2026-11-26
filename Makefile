@@ -1,5 +1,5 @@
 .PHONY: up up-all down build ps stats logs test test-integration lint dag-trigger \
-        up-crawl up-spark up-gpu up-serving crawl bronze silver media asr embed test-spark
+        up-crawl up-spark up-gpu up-serving crawl bronze silver media asr embed register predict test-spark
 
 PROFILE ?= core
 DAG ?= daily_pipeline
@@ -98,6 +98,14 @@ asr:
 # PhoBERT + SigLIP2 → gold.features trong gpu-worker (cần make up-gpu)
 embed:
 	$(GPU_RUN) python -m vicap.pipelines.embed $(if $(BATCH),--batch-id $(BATCH))
+
+# Đăng ký models/final_model.pt vào MLflow: kltn-p1, alias @champion (chạy lại không đăng ký trùng)
+register:
+	$(DC) run --rm --no-deps -v ./src:/app/src -v ./models:/p1:ro -e PYTHONPATH=/app/src gpu-worker python -m vicap.model.register_p1 --checkpoint /p1/final_model.pt
+
+# models:/kltn-p1@champion trên gold.features → gold.video_predictions
+predict:
+	$(GPU_RUN) python -m vicap.pipelines.predict $(if $(BATCH),--batch-id $(BATCH))
 
 # Test Spark (marker spark) trong airflow-scheduler: chép đè tests/ vào /tmp/vicap-test, cài pytest vào venv của image
 # (mất khi tạo lại container)
