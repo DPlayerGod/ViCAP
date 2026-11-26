@@ -33,7 +33,12 @@ from vicap.quality.checks import (
     run_suite,
     split_valid,
 )
-from vicap.quality.quarantine import merge_quarantine_rows, quarantine_rows, write_quarantine_rows
+from vicap.quality.quarantine import (
+    merge_quarantine_rows,
+    quarantine_by_batch,
+    quarantine_rows,
+    write_quarantine_rows,
+)
 from vicap.quality.result import CheckOutcome, Dimension, Severity, ValidationResult
 from vicap.quality.suites import (
     SuiteResult,
@@ -54,6 +59,7 @@ __all__ = [
     "ForeignKey", "MeanShift", "NonEmpty", "MatchesDate",
     "run_check", "run_suite", "row_mask", "split_valid",
     "TableSuite", "SuiteResult", "validate", "quarantine_rows", "write_quarantine_rows", "merge_quarantine_rows",
+    "quarantine_by_batch",
     "bronze_videos_suite", "silver_videos_suite", "silver_transcripts_suite",
     "gold_features_suite", "gold_predictions_suite", "gold_profiles_suite",
 ]

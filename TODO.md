@@ -58,7 +58,7 @@
 - [x] Postgres: tạo DB `airflow`, `iceberg`, `mlflow`, `superset` (`infra/postgres/init.sh`)
 - [x] Iceberg catalog REST (`tabulario/iceberg-rest:1.6.0`, JDBC trên Postgres) cho cả PyIceberg và Spark; test `ops.quarantine` qua REST thật
 - [x] `infra/airflow/Dockerfile`: Airflow 3.4.0 (Debian 13: JRE 17 chép từ `eclipse-temurin:17-jre`), OpenJDK 17, `pyspark` 3.5.x, jar `iceberg-spark-runtime-3.5_2.12` + `iceberg-aws-bundle` 1.6.1; `vicap.spark.get_spark` có `spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions` (`spark_conf` + test xong)
-- [x] `infra/gpu_worker/Dockerfile`: base `pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime`, `pip install .[gpu]` (mlflow ghim 2.22.1 cho khớp server)
+- [x] `infra/gpu_worker/Dockerfile`: base `pytorch/pytorch:2.7.1-cuda11.8-cudnn9-runtime` (trước là 2.5.1 / cu121, đổi vì transformers chặn torch.load trên torch < 2.6), `pip install .[gpu]` (mlflow ghim 2.22.1 cho khớp server)
 - [x] Kiểm tra GPU trong container (RTX 3050 Laptop, `torch 2.5.1+cu121`): Docker Desktop (WSL2) tự có GPU, không cần NVIDIA Container Toolkit; `docker compose --profile ml run --rm gpu-worker`
 - [x] DockerOperator qua `docker-proxy` (không mount socket vào Airflow): `dags/common/gpu.py` có `device_requests` (GPU), `network_mode="lakehouse_network"`, volume `vicap_hf_cache`; DAG `infra_smoke` chạy xanh
 - [x] `infra/superset/Dockerfile` cài `clickhouse-connect`; Superset kết nối được ClickHouse (`clickhousedb://…/vicap`)
@@ -87,9 +87,9 @@
 - [x] Log bằng Loguru (`vicap.utils.log.setup_logging`): màu theo level khi chạy ở terminal, chữ trơn trong Airflow; log `logging` chuẩn của thư viện được chuyển sang Loguru; image Airflow / gpu-worker build lại có `loguru`
 - [x] Test integration không ghi vào bảng / bucket thật: fixture `iceberg_scratch` (namespace tạm), `kafka_topic` (topic tạm), test S3 tự xoá; đã dọn rác cũ trong `lakehouse/`
 - [x] `silver/` (Spark): giữ bản crawl mới nhất mỗi video, caption / hashtag dựng như v5 (`vicap.silver.text`, so 186 video Giai đoạn 0), `silver_videos_suite` + `ops.quarantine`, `MERGE INTO silver.videos` theo `video_id` (chỉ cập nhật khi crawl sau) — `vicap.pipelines.silver.run_silver_clean` / `make silver`; chạy thật 12 dòng Bronze → 6 video, chạy lại 0 dòng, không snapshot mới; test Spark trong container: `make test-spark`
-- [ ] `features/audio.py`: tách audio như `extract_audio.py` (`-vn -ar 16000 -ac 1 -b:a 64k` → mp3), bỏ audio < 1 s → `derived/audio/`
-- [ ] `features/asr.py`: PhoWhisper → `silver.transcripts`
-- [ ] `features/frames.py`: 8 ảnh như `extract_frame.py` (`_0` từ `cover.*`, tất cả `thumbnail(640)` + JPEG q90) → `derived/frames/`
+- [x] `features/media.py`: port 1-1 `extract_frame.py` + `extract_audio.py` (bản gốc ở `scripts/reference/`, ffmpeg của `imageio-ffmpeg`) → `derived/frames/`, `derived/audio/` + `silver.media` — `vicap.pipelines.media` / `make media`; so 181 video Giai đoạn 0: dHash 1.267/1.267 frame lệch 0 bit so với frame v5; chạy thật 6 video → 48 ảnh + 6 mp3
+- [x] `features/asr.py` + `pipelines/asr.py`: PhoWhisper như cell 10 notebook → `silver.transcripts` (`transcript_status` ok / empty_or_music / missing / error) — `make asr`; chạy thật 6 video trên RTX 3050 → 6 `ok`; so 10 video v5 (mp4 Giai đoạn 0) với `transcript_full_v2.csv`: WER trung bình 8,5% (1–22%), lệch vài từ gần chỗ nối đoạn 30 s (GPU T4 → 3050 fp16, mp4 tải lại); chạy lại trên cùng máy cho kết quả giống hệt
+- [ ] Đo ảnh hưởng của chênh lệch ASR lên `text_emb[1]` (cosine với `T_asr` của Kaggle) khi làm `embed`
 - [ ] `features/embed.py`: SigLIP2 + PhoBERT → `gold.features` (spec ở PLAN mục 4.1; ghi bằng `replace_by_keys`)
 - [ ] `model/predict.py` trong DAG → `gold.video_predictions` (ghi bằng `replace_by_keys`)
 - [ ] `gold/profile.py` (Spark) → `gold.creator_profiles`, `gold.creator_profile_history`

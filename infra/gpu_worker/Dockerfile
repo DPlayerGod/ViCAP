@@ -1,7 +1,8 @@
 # GPU worker: PhoWhisper, PhoBERT, SigLIP2, predict P1 (PLAN mục 9.4).
 # Airflow gọi bằng DockerOperator (dags/common/gpu.py); không chạy thường trực.
-# CUDA 12.1: driver host 537.70 hỗ trợ tới CUDA 12.2.
-FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime
+# Driver host 537.70 chạy tới CUDA 12.2 → dùng bản CUDA 11.8. torch >= 2.6 vì transformers chặn torch.load file
+# .bin (PhoWhisper-medium chỉ có pytorch_model.bin) trên torch cũ hơn (CVE-2025-32434).
+FROM pytorch/pytorch:2.7.1-cuda11.8-cudnn9-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \

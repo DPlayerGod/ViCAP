@@ -137,9 +137,22 @@ SILVER_VIDEOS_SCHEMA = _schema(
     ("updated_at", TimestamptzType(), True),
 )
 
+# Kết quả cắt 8 ảnh + tách audio (vicap.features.media) của mỗi video; file nằm ở lakehouse/derived/.
+SILVER_MEDIA_SCHEMA = _schema(
+    ("video_id", StringType(), True),
+    ("media_type", StringType(), True),
+    ("n_source_images", IntegerType(), True),  # video: số frame (dur·fps); slideshow: số slide
+    ("thumb_source", StringType(), True),  # thumbnail / first_frame
+    ("has_audio", BooleanType(), True),  # slideshow: không
+    ("audio_duration", FloatType(), False),  # giây, theo mutagen như extract_audio.py
+    ("batch_id", StringType(), True),  # lô Silver lúc cắt
+    ("created_at", TimestamptzType(), True),
+)
+
 SILVER_TRANSCRIPTS_SCHEMA = _schema(
     ("video_id", StringType(), True),
     ("transcript_raw", StringType(), False),
+    ("transcript_status", StringType(), True),  # ok / empty_or_music / missing / error, như notebook
     ("has_transcript", BooleanType(), True),
     ("asr_model", StringType(), False),
     ("batch_id", StringType(), True),
@@ -204,6 +217,7 @@ BRONZE_VIDEOS_RAW = TableDef(
 )
 BRONZE_CREATORS_RAW = TableDef("bronze.creators_raw", BRONZE_CREATORS_RAW_SCHEMA)
 SILVER_VIDEOS = TableDef("silver.videos", SILVER_VIDEOS_SCHEMA, key=("video_id",))
+SILVER_MEDIA = TableDef("silver.media", SILVER_MEDIA_SCHEMA, key=("video_id",))
 SILVER_TRANSCRIPTS = TableDef("silver.transcripts", SILVER_TRANSCRIPTS_SCHEMA, key=("video_id",))
 GOLD_FEATURES = TableDef("gold.features", GOLD_FEATURES_SCHEMA, key=("video_id",))
 GOLD_VIDEO_PREDICTIONS = TableDef("gold.video_predictions", GOLD_VIDEO_PREDICTIONS_SCHEMA, key=("video_id",))
@@ -223,6 +237,7 @@ ALL_TABLES: tuple[TableDef, ...] = (
     BRONZE_VIDEOS_RAW,
     BRONZE_CREATORS_RAW,
     SILVER_VIDEOS,
+    SILVER_MEDIA,
     SILVER_TRANSCRIPTS,
     GOLD_FEATURES,
     GOLD_VIDEO_PREDICTIONS,

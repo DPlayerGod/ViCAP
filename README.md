@@ -80,6 +80,16 @@ make silver      # bronze.videos_raw → silver.videos; make silver BATCH=202611
 
 Spark giữ bản crawl mới nhất mỗi `video_id`, dựng `caption` / `hashtags` đúng như dataset v5 (`vicap.silver.text`, đã so 186 video Giai đoạn 0), kiểm định `silver_videos_suite` rồi `MERGE INTO silver.videos`. Video đã có chỉ được cập nhật khi bản mới crawl sau, nên chạy lại / chạy lô cũ không đè. Dòng lỗi vào `ops.quarantine` (stage `silver_videos`).
 
+## Media + ASR
+
+```bash
+make media       # silver.videos → 8 ảnh + mp3 ở lakehouse/derived/ + silver.media (máy host, uv sync --extra media)
+make up-gpu      # giữ lõi + Airflow + docker-proxy + MLflow, tắt phần còn lại
+make asr         # PhoWhisper trong gpu-worker → silver.transcripts (lần đầu tải model ~3 GB)
+```
+
+Cắt ảnh / tách audio là port nguyên script dựng dataset lúc train (`scripts/reference/`); ASR giống cell 10 của notebook.
+
 ## Test
 
 ```bash

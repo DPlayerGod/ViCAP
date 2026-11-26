@@ -313,6 +313,14 @@ services:
     profiles: ["ml"]
     restart: "no"
     command: ["python", "-c", "import torch; assert torch.cuda.is_available(), 'không thấy GPU'; print('GPU:', torch.cuda.get_device_name(0))"]
+    # Chạy tay một bước (vd. asr) giống DockerOperator: docker compose --profile "*" run --rm --no-deps gpu-worker python -m …
+    environment:
+      <<: *pipeline-s3-env
+      MINIO_ENDPOINT: http://minio:9000
+      CATALOG_URI_CLIENT: http://iceberg-rest:8181
+      CATALOG_WAREHOUSE: s3://lakehouse/warehouse/
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
     volumes: [hf_cache:/models/hf]
     deploy:
       resources:

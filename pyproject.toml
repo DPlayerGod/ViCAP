@@ -25,7 +25,11 @@ airflow = ["apache-airflow-providers-docker>=3.9", "kafka-python>=2.1", "yt-dlp[
 # Chạy crawl trên máy host (Windows không cài được apache-airflow): uv sync --extra dev --extra crawler
 crawler = ["kafka-python>=2.1", "yt-dlp[default]==2026.11.23"]
 spark = ["pyspark>=3.5,<3.6"]
-gpu = ["torch", "transformers", "pyvi", "mlflow==2.22.1", "opencv-python-headless", "pillow"]
+# 8 ảnh + audio (vicap.features.media): ffmpeg tĩnh của imageio-ffmpeg như script dựng dataset lúc train
+media = ["imageio-ffmpeg>=0.5", "pillow", "numpy>=1.26", "mutagen>=1.47"]
+# Image gpu-worker: torch 2.7.1 + CUDA 11.8 (driver host 537.70 tối đa CUDA 12.2). transformers 4.x như notebook;
+# >= 4.56: pipeline nhận dtype=.
+gpu = ["vicap[media]", "torch", "transformers>=4.56,<5", "pyvi", "mlflow==2.22.1", "opencv-python-headless"]
 # scripts/ của Giai đoạn 0
 scripts = ["yt-dlp[default]==2026.11.23", "pandas", "opencv-python-headless", "pillow"]
 api = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]

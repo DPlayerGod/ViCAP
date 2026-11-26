@@ -140,3 +140,23 @@ def merge_quarantine_rows(
         table, pa.Table.from_pylist(rows, schema=BAD_SCHEMA), stage=stage, batch_id=batch_id,
         processing_date=processing_date, severity=severity,
     )
+
+
+def quarantine_by_batch(
+    table: Table,
+    problems: Iterable[tuple[str, str, str | None, str]],
+    *,
+    stage: str,
+    processing_date: str | date | datetime,
+    resolved: dict[str, set[str]] | None = None,
+) -> None:
+    """``problems``: ``(batch_id, video_id, username, lỗi)``. Gộp theo ``(stage, batch_id)`` bằng
+    ``merge_quarantine_rows``; ``resolved[batch_id]``: video lần này xử lý được (bỏ khỏi quarantine)."""
+    resolved = resolved or {}
+    groups: dict[str, list[dict]] = {}
+    for batch_id, video_id, username, error in problems:
+        groups.setdefault(batch_id, []).append({"video_id": video_id, "username": username, "_errors": [error]})
+    for batch_id in sorted(set(groups) | set(resolved)):
+        merge_quarantine_rows(table, pa.Table.from_pylist(groups.get(batch_id, []), schema=BAD_SCHEMA),
+                              stage=stage, batch_id=batch_id, processing_date=processing_date,
+                              resolved=resolved.get(batch_id, ()))

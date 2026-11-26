@@ -1,5 +1,5 @@
 .PHONY: up up-all down build ps stats logs test test-integration lint dag-trigger \
-        up-crawl up-spark up-gpu up-serving crawl bronze silver test-spark
+        up-crawl up-spark up-gpu up-serving crawl bronze silver media asr test-spark
 
 PROFILE ?= core
 DAG ?= daily_pipeline
@@ -82,6 +82,15 @@ bronze:
 # Spark chạy trong airflow-scheduler (cần make up-spark): make silver | make silver BATCH=20261125-143314
 silver:
 	docker compose exec airflow-scheduler python -m vicap.pipelines.silver $(if $(BATCH),--batch-id $(BATCH))
+
+# 8 ảnh + audio → lakehouse/derived/ + silver.media, chạy trên máy host (uv sync --extra media)
+media:
+	uv run python -m vicap.pipelines.media $(if $(BATCH),--batch-id $(BATCH))
+
+# PhoWhisper → silver.transcripts trong gpu-worker (cần make up-gpu). Mount ./src để không phải build lại
+# image mỗi lần sửa code; lần đầu tải model (~3 GB) vào volume vicap_hf_cache.
+asr:
+	$(DC) run --rm --no-deps -v ./src:/app/src -e PYTHONPATH=/app/src gpu-worker python -m vicap.pipelines.asr $(if $(BATCH),--batch-id $(BATCH))
 
 # Test Spark (marker spark) trong airflow-scheduler: chép đè tests/ vào /tmp/vicap-test, cài pytest vào venv của image
 # (mất khi tạo lại container)
