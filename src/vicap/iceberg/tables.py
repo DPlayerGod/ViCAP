@@ -16,6 +16,7 @@ from pyiceberg.transforms import IdentityTransform
 from pyiceberg.types import (
     BooleanType,
     DateType,
+    DoubleType,
     FloatType,
     IcebergType,
     IntegerType,
@@ -211,6 +212,16 @@ OPS_QUARANTINE_SCHEMA = _schema(
     ("created_at", TimestamptzType(), True),
 )
 
+# Kết quả bước quality_check (PLAN mục 5, 9.3): một dòng mỗi (batch_id, check_name); chạy lại thì thay cả lô.
+OPS_QUALITY_CHECKS_SCHEMA = _schema(
+    ("batch_id", StringType(), True),
+    ("check_name", StringType(), True),  # n_videos, missing_transcript_ratio, label_shift, …
+    ("value", DoubleType(), False),
+    ("severity", StringType(), True),  # ok / warn
+    ("detail", StringType(), False),
+    ("created_at", TimestamptzType(), True),
+)
+
 
 BRONZE_VIDEOS_RAW = TableDef(
     "bronze.videos_raw", BRONZE_VIDEOS_RAW_SCHEMA, _identity(BRONZE_VIDEOS_RAW_SCHEMA, "processing_date")
@@ -232,6 +243,7 @@ GOLD_CREATOR_PROFILE_HISTORY = TableDef(
 OPS_QUARANTINE = TableDef(
     "ops.quarantine", OPS_QUARANTINE_SCHEMA, _identity(OPS_QUARANTINE_SCHEMA, "processing_date")
 )
+OPS_QUALITY_CHECKS = TableDef("ops.quality_checks", OPS_QUALITY_CHECKS_SCHEMA, key=("batch_id", "check_name"))
 
 ALL_TABLES: tuple[TableDef, ...] = (
     BRONZE_VIDEOS_RAW,
@@ -244,4 +256,5 @@ ALL_TABLES: tuple[TableDef, ...] = (
     GOLD_CREATOR_PROFILES,
     GOLD_CREATOR_PROFILE_HISTORY,
     OPS_QUARANTINE,
+    OPS_QUALITY_CHECKS,
 )

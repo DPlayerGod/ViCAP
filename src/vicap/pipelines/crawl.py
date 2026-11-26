@@ -9,6 +9,7 @@ Chạy tay (máy host, cần ``make up-crawl``)::
 from __future__ import annotations
 
 import argparse
+import os
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from vicap.ingestion.tiktok import TikTokClient
 from vicap.utils.dates import format_batch_id, now_utc
 from vicap.utils.log import setup_logging
 
-DEFAULT_CREATORS_FILE = Path("configs/creators.txt")
+DEFAULT_CREATORS_FILE = Path(os.getenv("CREATORS_FILE", "configs/creators.txt"))  # Airflow: /opt/airflow/configs/…
 DEFAULT_N = 10  # Đợt B: 10 video gần nhất mỗi creator (PLAN mục 3)
 
 
